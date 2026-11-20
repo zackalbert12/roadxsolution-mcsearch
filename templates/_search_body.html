@@ -1,6 +1,22 @@
 <div class="hero"><h1>Carrier Search</h1>
 <p>Search any carrier by MC, USDOT, phone, email or company name — live FMCSA SAFER data. No login needed.</p></div>
 
+<div style="margin-bottom:12px">
+  <a class="btn {% if mode=='bulk' %}secondary{% endif %}" href="{{ url_for('carrier_search') }}">Single search</a>
+  <a class="btn {% if mode=='bulk' %}{% else %}secondary{% endif %}" href="{{ url_for('carrier_search', mode='bulk') }}">Bulk search</a>
+</div>
+
+{% if mode == 'bulk' %}
+<div class="card">
+  <form method="post" action="{{ url_for('carrier_search') }}">
+    <input type="hidden" name="mode" value="bulk">
+    <label>Paste MC or DOT numbers — one per line (up to 50 per search)</label>
+    <textarea name="bulk" rows="8" placeholder="MC 1630009&#10;4218222&#10;DOT 1677211" required>{{ bulk }}</textarea>
+    <div style="margin-top:12px"><button class="btn" type="submit">Check all</button></div>
+  </form>
+  <p class="muted">Each line is checked live against FMCSA SAFER — MC and DOT numbers both work, and a number that is both shows both records.</p>
+</div>
+{% else %}
 <div class="card">
   <form method="get" action="{{ url_for('carrier_search') }}" class="form-row">
     <div style="flex:1;min-width:220px"><label>MC, USDOT, phone, email or company name</label>
@@ -17,9 +33,34 @@
     <div><label>&nbsp;</label><button class="btn" type="submit">Search</button></div>
   </form>
 </div>
+{% endif %}
 
 {% if result %}
-  {% if result.kind == 'detail' %}
+  {% if result.kind == 'bulk' %}
+    <div class="card">
+      <h2>Bulk results — {{ result.total }} checked</h2>
+      <p><b>{{ result.qualified }} qualified</b> · {{ result.not_found }} not found{% if result.errors %} · <b>{{ result.errors }} errors</b>{% endif %}</p>
+      {% if result.capped %}<p class="muted">Only the first {{ result.cap }} lines were checked — paste the rest in a second bulk search.</p>{% endif %}
+      <p><button class="btn secondary" type="button" onclick="downloadBulkCsv()">Download CSV</button></p>
+      <div class="table-wrap"><table id="bulk-table">
+        <thead><tr><th>Input</th><th>Carrier</th><th>MC / USDOT</th><th>Status</th><th>Authority</th><th>Phone</th><th>Location</th><th>Cargo</th></tr></thead>
+        <tbody>
+        {% for r in result.rows %}
+          <tr>
+            <td>{{ r.input }}</td>
+            <td><b>{{ r.legal_name or '—' }}</b>{% if r.note and not r.legal_name %}<br><span class="muted">{{ r.note }}</span>{% endif %}</td>
+            <td>{% if r.mc_number %}MC-{{ r.mc_number }}<br>{% endif %}{% if r.usdot_number %}USDOT {{ r.usdot_number }}{% endif %}{% if not r.mc_number and not r.usdot_number %}—{% endif %}</td>
+            <td>{% if r.status == 'Qualified' %}<span class="pill green">Qualified</span>{% elif r.status == 'Not Found' or r.status == 'Error' %}<span class="pill red">{{ r.status }}</span>{% else %}<span class="pill yellow">{{ r.status }}</span>{% endif %}</td>
+            <td>{{ r.authority_status or '—' }}</td>
+            <td>{% if r.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td>
+            <td>{% if r.city %}{{ r.city }}, {{ r.state }}{% else %}—{% endif %}</td>
+            <td>{{ r.cargo or '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  {% elif result.kind == 'detail' %}
     {% set rec = result.rec %}
     <div class="card">
       <h2>{{ rec.legal_name or 'Carrier' }}
@@ -114,5 +155,21 @@ async function copyPhone(btn, phone){
   const old = btn.textContent;
   btn.textContent = 'Copied ✓';
   setTimeout(function(){ btn.textContent = old; btn.classList.remove('copied'); }, 1200);
+}
+function downloadBulkCsv(){
+  const rows = [['Input','Carrier','MC','USDOT','Status','Authority','Phone','City','State','Cargo']];
+  document.querySelectorAll('#bulk-table tbody tr').forEach(function(tr){
+    const cells = [];
+    tr.querySelectorAll('td').forEach(function(td){ cells.push(td.innerText.replace(/\n/g,' ').trim()); });
+    const mc = (cells[2].match(/MC-(\d+)/)||[])[1] || '';
+    const dot = (cells[2].match(/USDOT (\d+)/)||[])[1] || '';
+    const loc = cells[6].split(',');
+    rows.push([cells[0], cells[1], mc, dot, cells[3], cells[4], cells[5], (loc[0]||'').trim(), (loc[1]||'').trim(), cells[7]]);
+  });
+  const csv = rows.map(function(r){ return r.map(function(v){ return '"' + String(v).replace(/"/g,'""') + '"'; }).join(','); }).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+  a.download = 'bulk-carrier-search.csv';
+  a.click();
 }
 </script>

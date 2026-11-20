@@ -506,25 +506,124 @@ def _run_carrier_search(q, stype):
     return _name_search(q)
 
 
+BULK_MAX_LINES = 50
+
+
+def _bulk_row(input_text, kind, rec):
+    return {"input": input_text, "kind": kind,
+            "mc_number": rec.get("mc_number") or "",
+            "usdot_number": rec.get("usdot_number") or "",
+            "legal_name": rec.get("legal_name") or "",
+            "city": rec.get("city") or "", "state": rec.get("state") or "",
+            "phone": rec.get("phone") or "",
+            "status": rec.get("status") or "",
+            "authority_status": rec.get("authority_status") or "",
+            "cargo": ", ".join(rec.get("cargo_carried") or []),
+            "qualified": bool(rec.get("qualified")),
+            "note": rec.get("note") or ""}
+
+
+def _bulk_line_check(line):
+    """Check one bulk line. Returns row dicts (usually one; two when the
+    number is both a live USDOT and a live MC)."""
+    s = line.strip()
+    m = re.match(r"^(mc|dot|usdot)[\s\-#]*(\d+)\s*$", s, re.I)
+    if m:
+        kind, num = m.group(1).lower(), m.group(2)
+        if kind == "mc":
+            return [_bulk_row(s, "MC",
+                              check_mc(num, ("general", "fresh", "reefer")))]
+        return [_bulk_row(s, "USDOT",
+                          check_usdot(num, ("general", "fresh", "reefer")))]
+    digits = _digits(s)
+    if not digits or not digits.isdigit() or len(digits) > 8:
+        return [{"input": s, "kind": "—", "mc_number": "",
+                 "usdot_number": "", "legal_name": "", "city": "",
+                 "state": "", "phone": "", "status": "Error",
+                 "authority_status": "", "cargo": "", "qualified": False,
+                 "note": "Not a valid MC or DOT number — one number per line."}]
+    dot = check_usdot(digits, ("general", "fresh", "reefer"))
+    mc = check_mc(digits, ("general", "fresh", "reefer"))
+
+    def _usable(rec):
+        return bool(rec.get("found")) and not rec.get("fetch_error") \
+            and bool(rec.get("legal_name"))
+
+    rows = []
+    if _usable(dot):
+        rows.append(_bulk_row(s, "USDOT", dot))
+    if _usable(mc):
+        rows.append(_bulk_row(s, "MC", mc))
+    if rows:
+        return rows
+    if dot.get("found") and not dot.get("fetch_error"):
+        return [_bulk_row(s, "USDOT", dot)]
+    return [_bulk_row(s, "MC", mc)]
+
+
+def _run_bulk_search(raw):
+    """Bulk search: one MC/DOT per line, up to BULK_MAX_LINES, checked
+    in parallel. Returns the bulk result dict."""
+    lines = [ln.strip() for ln in (raw or "").splitlines() if ln.strip()]
+    seen, uniq = set(), []
+    for ln in lines:
+        key = ln.lower()
+        if key not in seen:
+            seen.add(key)
+            uniq.append(ln)
+    capped = len(uniq) > BULK_MAX_LINES
+    uniq = uniq[:BULK_MAX_LINES]
+    rows = []
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=SCAN_WORKERS) as ex:
+        futs = [ex.submit(_bulk_line_check, ln) for ln in uniq]
+        for fut in futs:  # in input order
+            try:
+                rows.extend(fut.result())
+            except Exception as exc:
+                rows.append({"input": "", "kind": "—", "mc_number": "",
+                             "usdot_number": "", "legal_name": "",
+                             "city": "", "state": "", "phone": "",
+                             "status": "Error", "authority_status": "",
+                             "cargo": "", "qualified": False,
+                             "note": "Check failed: %s" % exc})
+    return {"kind": "bulk", "rows": rows, "total": len(uniq),
+            "qualified": sum(1 for r in rows if r["qualified"]),
+            "not_found": sum(1 for r in rows if r["status"] == "Not Found"),
+            "errors": sum(1 for r in rows if r["status"] == "Error"),
+            "capped": capped, "cap": BULK_MAX_LINES}
+
+
 @app.route("/search", methods=["GET", "POST"])
 def carrier_search():
     """Public carrier search — no login needed. MC, USDOT, phone, email
     or company name; live SAFER data for numbers and names, saved
-    carriers for phone/email reverse lookup."""
+    carriers for phone/email reverse lookup. Bulk mode checks a pasted
+    list of MC/DOT numbers (up to 50) in one go."""
     user = current_user()
+    mode = (request.values.get("mode") or "single").strip().lower()
+    if mode not in ("single", "bulk"):
+        mode = "single"
     q = (request.values.get("q") or "").strip()
     stype = (request.values.get("type") or "auto").strip().lower()
     if stype not in ("auto", "mc", "usdot", "phone", "email", "name"):
         stype = "auto"
+    bulk = (request.values.get("bulk") or "").strip()
     result = None
-    if q:
+    if mode == "bulk" and bulk:
+        try:
+            result = _run_bulk_search(bulk)
+        except Exception as exc:
+            result = {"kind": "message",
+                      "text": "Bulk search failed: %s. Please try again." % exc}
+    elif q:
         try:
             result = _run_carrier_search(q, stype)
         except Exception as exc:
             result = {"kind": "message",
                       "text": "Search failed: %s. Please try again." % exc}
     return render_template("search.html", user=user, q=q, stype=stype,
-                           result=result)
+                           result=result, mode=mode, bulk=bulk)
 
 
 @app.route("/login", methods=["GET", "POST"])
