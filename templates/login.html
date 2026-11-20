@@ -21,6 +21,7 @@
         <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Sign In</button></div>
       </form>
       <p style="text-align:center;margin-top:14px"><a href="{{ url_for('forgot') }}">Forgot Password?</a></p>
+      <p style="text-align:center;margin-top:10px"><a href="{{ url_for('carrier_search') }}">Search a carrier — no login needed</a></p>
     </div>
     <div id="pane-signup" style="display:none">
       <form method="post" action="{{ url_for('login') }}">

@@ -357,3 +357,89 @@ def check_usdot(usdot, selected_cargo=("general", "fresh", "reefer"), delay=DELA
     rec["note"] = note
     rec["qualified"] = qualified
     return rec
+
+
+def parse_name_matches(html, limit=50):
+    """Parse a SAFER 'Select Company' page into match dicts.
+
+    Each match row links to the carrier snapshot by USDOT:
+    query.asp?...&query_param=USDOT&query_string=<usdot>.
+    Returns [{"name", "location", "usdot"}] in SAFER's order,
+    de-duplicated by USDOT (the same carrier can appear twice,
+    once under its legal name and once under a DBA).
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    matches = []
+    seen = set()
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "query_param=USDOT" not in href:
+            continue
+        m = re.search(r"query_string=(\d+)", href)
+        if not m:
+            continue
+        usdot = m.group(1)
+        if usdot in seen:
+            continue
+        seen.add(usdot)
+        name = _clean(a.get_text(" ", strip=True))
+        location = ""
+        tr = a.find_parent("tr")
+        if tr is not None:
+            td = tr.find("td")
+            if td is not None:
+                location = _clean(td.get_text(" ", strip=True))
+        matches.append({"name": name, "location": location, "usdot": usdot})
+        if len(matches) >= limit:
+            break
+    return matches
+
+
+def search_by_name(name, limit=50):
+    """Search SAFER by company name (keyword search).
+
+    SAFER redirects NAME searches to keywordx.asp, which lists
+    'Possible Keyword Matches' — name + location per carrier, each
+    linking to its snapshot by USDOT. (LEGAL_NAME is NOT a valid
+    query_param — SAFER treats it as an MC/MX number search and
+    returns 'RECORD NOT FOUND'.)
+
+    Returns (matches, error_or_None). An empty match list with no
+    error means SAFER found nobody under that name.
+    """
+    params = {
+        "searchtype": "ANY",
+        "query_type": "queryCarrierSnapshot",
+        "query_param": "NAME",
+        "query_string": name,
+    }
+    proxies = _load_proxies()
+    attempts = []
+    seen = set()
+    for _ in range(MAX_RETRIES):
+        p = _next_proxy(proxies)
+        if p and p not in seen:
+            attempts.append(p)
+            seen.add(p)
+    attempts.append(None)  # final direct attempt
+    last_err = None
+    for attempt, proxy in enumerate(attempts):
+        try:
+            req_proxies = {"http": proxy, "https": proxy} if proxy else None
+            resp = requests.get(SAFER_URL, params=params, headers=HEADERS,
+                                timeout=(8 if proxy else TIMEOUT),
+                                proxies=req_proxies)
+            if resp.status_code in (429, 503) or resp.status_code >= 500:
+                last_err = "HTTP %s from SAFER" % resp.status_code
+                if attempt < len(attempts) - 1:
+                    time.sleep(BACKOFF[min(attempt, len(BACKOFF) - 1)])
+                    continue
+                return [], last_err
+            resp.raise_for_status()
+            return parse_name_matches(resp.text, limit), None
+        except requests.RequestException as exc:
+            last_err = "Fetch error: %s" % exc
+            if attempt < len(attempts) - 1:
+                continue
+            return [], last_err
+    return [], last_err or "Fetch error"

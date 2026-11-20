@@ -22,7 +22,7 @@ from flask import (
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import db as store
-from safer import check_mc, check_usdot
+from safer import check_mc, check_usdot, search_by_name
 from commodity import COMMODITIES, commodity_names, filter_carriers_by_commodity
 from pickup_lines import PICKUP_LINES, CATEGORIES, lines_for
 
@@ -354,6 +354,177 @@ def index():
     if current_user():
         return redirect(url_for("dashboard"))
     return redirect(url_for("login"))
+
+
+# ---------------------------------------------------------------- public search
+
+def _digits(s):
+    return re.sub(r"\D", "", s or "")
+
+
+def _safer_url(param, value):
+    """Link to verify one record directly on the FMCSA SAFER website."""
+    return ("https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY"
+            "&query_type=queryCarrierSnapshot&query_param=%s"
+            "&query_string=%s" % (param, value))
+
+
+def _detail_result(rec, param):
+    """Wrap a classified SAFER record for the search page."""
+    value = rec.get("mc_number") if param == "MC_MX" else (
+        rec.get("usdot_number") or rec.get("mc_number"))
+    return {"kind": "detail", "rec": rec,
+            "safer_url": _safer_url(param, value or "")}
+
+
+def _local_carriers_by_phone(digits):
+    """Saved carriers whose phone contains these digits (any format)."""
+    if len(digits) < 7:
+        return []
+    conn = store.connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM carriers WHERE phone IS NOT NULL AND phone != ''"
+            " ORDER BY checked_at DESC LIMIT 500").fetchall()
+    finally:
+        conn.close()
+    out, seen = [], set()
+    for row in rows:
+        d = dict(row)
+        if digits in _digits(d.get("phone")) and d["mc_number"] not in seen:
+            seen.add(d["mc_number"])
+            out.append(carrier_dict(d))
+    return out
+
+
+def _local_carriers_by_name(q):
+    """Saved carriers whose legal or DBA name contains q."""
+    conn = store.connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM carriers WHERE legal_name LIKE ? OR dba_name LIKE ?"
+            " ORDER BY checked_at DESC LIMIT 50",
+            ("%" + q + "%", "%" + q + "%")).fetchall()
+    finally:
+        conn.close()
+    out, seen = [], set()
+    for row in rows:
+        d = dict(row)
+        if d["mc_number"] not in seen:
+            seen.add(d["mc_number"])
+            out.append(carrier_dict(d))
+    return out
+
+
+def _name_search(q):
+    """Company-name search: live SAFER keyword matches first, saved
+    carriers as a fallback when SAFER finds nobody (or is unreachable)."""
+    matches, err = search_by_name(q)
+    if err:
+        rows = _local_carriers_by_name(q)
+        if rows:
+            return {"kind": "local_matches", "rows": rows,
+                    "heading": "Saved carriers matching this name",
+                    "note": "Live SAFER name search is unavailable right now (%s) — showing carriers we already checked." % err}
+        return {"kind": "message",
+                "text": "SAFER name search is unavailable right now (%s). Try an MC or USDOT number instead." % err}
+    if not matches:
+        rows = _local_carriers_by_name(q)
+        if rows:
+            return {"kind": "local_matches", "rows": rows,
+                    "heading": "No live SAFER match — saved carriers matching this name"}
+        return {"kind": "message",
+                "text": "No carrier named \u201c%s\u201d found on SAFER, and none in our checked carriers either. Check the spelling or search by MC / USDOT." % q}
+    if len(matches) == 1:
+        rec = check_usdot(matches[0]["usdot"], ("general", "fresh", "reefer"))
+        res = _detail_result(rec, "USDOT")
+        res["matched"] = matches[0]
+        return res
+    return {"kind": "name_matches", "matches": matches,
+            "total": len(matches)}
+
+
+def _run_carrier_search(q, stype):
+    """Run a public carrier search. Result kinds: detail | ambiguous |
+    name_matches | local_matches | message."""
+    if stype == "mc":
+        return _detail_result(check_mc(q, ("general", "fresh", "reefer")), "MC_MX")
+    if stype == "usdot":
+        return _detail_result(check_usdot(q, ("general", "fresh", "reefer")), "USDOT")
+    if stype == "phone":
+        digits = _digits(q)
+        if len(digits) == 11 and digits.startswith("1"):
+            digits = digits[1:]
+        rows = _local_carriers_by_phone(digits)
+        if rows:
+            return {"kind": "local_matches", "rows": rows,
+                    "heading": "Saved carriers with this phone number"}
+        return {"kind": "message",
+                "text": "No carrier with this phone number in our checked carriers yet \u2014 search by MC or USDOT for a live SAFER check."}
+    if stype == "email":
+        # The app stores no carrier email addresses, so there is nothing
+        # to match an email against.
+        return {"kind": "message",
+                "text": "We don't store carrier email addresses, so there's nothing to match an email against \u2014 search by MC, USDOT or company name instead."}
+    if stype == "name":
+        return _name_search(q)
+    # auto-detect
+    if "@" in q:
+        return _run_carrier_search(q, "email")
+    stripped = q.strip()
+    digits = _digits(q)
+    if stripped.isdigit() and len(stripped) <= 8:
+        # Could be a USDOT or an MC — check both, like CarrierChk does.
+        # A record only counts as a real alternative when SAFER returns a
+        # usable carrier (an inactive record has no name — it is not a
+        # second carrier, just a stale number).
+        dot = check_usdot(stripped, ("general", "fresh", "reefer"))
+        mc = check_mc(stripped, ("general", "fresh", "reefer"))
+
+        def _usable(rec):
+            return bool(rec.get("found")) and not rec.get("fetch_error") \
+                and bool(rec.get("legal_name"))
+
+        dot_usable, mc_usable = _usable(dot), _usable(mc)
+        if dot_usable and mc_usable:
+            return {"kind": "ambiguous", "number": stripped,
+                    "dot": _detail_result(dot, "USDOT"),
+                    "mc": _detail_result(mc, "MC_MX")}
+        if dot_usable:
+            return _detail_result(dot, "USDOT")
+        if mc_usable:
+            return _detail_result(mc, "MC_MX")
+        # Neither is a live carrier: show whichever record exists at all
+        # (e.g. an inactive one), DOT first, else the MC Not Found state.
+        if dot.get("found") and not dot.get("fetch_error"):
+            return _detail_result(dot, "USDOT")
+        return _detail_result(mc, "MC_MX")
+    if digits and (len(digits) == 10 or (len(digits) == 11 and digits.startswith("1"))):
+        return _run_carrier_search(q, "phone")
+    if stripped.isdigit():
+        return _run_carrier_search(stripped, "mc")
+    return _name_search(q)
+
+
+@app.route("/search", methods=["GET", "POST"])
+def carrier_search():
+    """Public carrier search — no login needed. MC, USDOT, phone, email
+    or company name; live SAFER data for numbers and names, saved
+    carriers for phone/email reverse lookup."""
+    user = current_user()
+    q = (request.values.get("q") or "").strip()
+    stype = (request.values.get("type") or "auto").strip().lower()
+    if stype not in ("auto", "mc", "usdot", "phone", "email", "name"):
+        stype = "auto"
+    result = None
+    if q:
+        try:
+            result = _run_carrier_search(q, stype)
+        except Exception as exc:
+            result = {"kind": "message",
+                      "text": "Search failed: %s. Please try again." % exc}
+    return render_template("search.html", user=user, q=q, stype=stype,
+                           result=result)
 
 
 @app.route("/login", methods=["GET", "POST"])

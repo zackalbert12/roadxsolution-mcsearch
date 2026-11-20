@@ -1,0 +1,118 @@
+<div class="hero"><h1>Carrier Search</h1>
+<p>Search any carrier by MC, USDOT, phone, email or company name — live FMCSA SAFER data. No login needed.</p></div>
+
+<div class="card">
+  <form method="get" action="{{ url_for('carrier_search') }}" class="form-row">
+    <div style="flex:1;min-width:220px"><label>MC, USDOT, phone, email or company name</label>
+      <input type="text" name="q" value="{{ q }}" placeholder="e.g. 1630009, 4218222, HOUSER'S HAULING LLC" required></div>
+    <div><label>Search by</label>
+      <select name="type">
+        <option value="auto" {% if stype=='auto' %}selected{% endif %}>Auto-detect</option>
+        <option value="mc" {% if stype=='mc' %}selected{% endif %}>MC Number</option>
+        <option value="usdot" {% if stype=='usdot' %}selected{% endif %}>USDOT Number</option>
+        <option value="phone" {% if stype=='phone' %}selected{% endif %}>Phone</option>
+        <option value="email" {% if stype=='email' %}selected{% endif %}>Email</option>
+        <option value="name" {% if stype=='name' %}selected{% endif %}>Company Name</option>
+      </select></div>
+    <div><label>&nbsp;</label><button class="btn" type="submit">Search</button></div>
+  </form>
+</div>
+
+{% if result %}
+  {% if result.kind == 'detail' %}
+    {% set rec = result.rec %}
+    <div class="card">
+      <h2>{{ rec.legal_name or 'Carrier' }}
+        {% if rec.status == 'Qualified' %}<span class="pill green">Qualified</span>
+        {% elif rec.status == 'Not Found' or rec.status == 'Error' %}<span class="pill red">{{ rec.status }}</span>
+        {% else %}<span class="pill yellow">{{ rec.status }}</span>{% endif %}
+      </h2>
+      {% if result.matched %}<p class="muted">Matched name search: <b>{{ result.matched.name }}</b> — {{ result.matched.location }}</p>{% endif %}
+      <div class="table-wrap"><table><tbody>
+        <tr><th>Legal Name</th><td><b>{{ rec.legal_name or '—' }}</b></td></tr>
+        <tr><th>DBA Name</th><td>{{ rec.dba_name or '—' }}</td></tr>
+        <tr><th>Entity Type</th><td>{{ rec.entity_type or '—' }}</td></tr>
+        <tr><th>Authority Status</th><td>{{ rec.authority_status or '—' }}</td></tr>
+        <tr><th>MC Number</th><td>{% if rec.mc_number %}MC-{{ rec.mc_number }}{% else %}—{% endif %}</td></tr>
+        <tr><th>USDOT Number</th><td>{{ rec.usdot_number or '—' }}</td></tr>
+        <tr><th>Address</th><td>{{ rec.address_line1 or '' }}{% if rec.city %} {{ rec.city }}, {{ rec.state }}{% endif %}{% if not rec.address_line1 and not rec.city %}—{% endif %}</td></tr>
+        <tr><th>Phone</th><td>{% if rec.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ rec.phone }}')" title="Tap to copy">{{ rec.phone }}</button>{% else %}—{% endif %}</td></tr>
+        <tr><th>Power Units</th><td>{{ rec.power_units or '—' }}</td></tr>
+        <tr><th>Cargo Carried</th><td>{% for c in rec.cargo_carried %}<span class="chip">{{ c }}</span> {% else %}—{% endfor %}</td></tr>
+        <tr><th>Result</th><td><b>{{ rec.status }}</b>{% if rec.note %}<br><span class="muted">{{ rec.note }}</span>{% endif %}</td></tr>
+      </tbody></table></div>
+      <p style="margin-top:12px"><a href="{{ result.safer_url }}" target="_blank" rel="noopener">Verify directly on FMCSA SAFER Web ↗</a></p>
+    </div>
+  {% elif result.kind == 'ambiguous' %}
+    <div class="card">
+      <h2>Two carriers share this number</h2>
+      <p class="muted">“{{ result.number }}” is both a USDOT number and an MC number. Pick one:</p>
+      <div class="grid cols-2">
+        <div class="card">
+          <h3>USDOT {{ result.number }}</h3>
+          <p><b>{{ result.dot.rec.legal_name or '—' }}</b><br><span class="muted">{{ result.dot.rec.city }}, {{ result.dot.rec.state }} · {{ result.dot.rec.status }}</span></p>
+          <a class="btn" href="{{ url_for('carrier_search', q=result.number, type='usdot') }}">View USDOT record</a>
+        </div>
+        <div class="card">
+          <h3>MC-{{ result.number }}</h3>
+          <p><b>{{ result.mc.rec.legal_name or '—' }}</b><br><span class="muted">{{ result.mc.rec.city }}, {{ result.mc.rec.state }} · {{ result.mc.rec.status }}</span></p>
+          <a class="btn" href="{{ url_for('carrier_search', q=result.number, type='mc') }}">View MC record</a>
+        </div>
+      </div>
+    </div>
+  {% elif result.kind == 'name_matches' %}
+    <div class="card">
+      <h2>Possible matches ({{ result.total }})</h2>
+      <p class="muted">Pick a carrier to see its full SAFER details.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Carrier / DBA Name</th><th>Location</th><th>USDOT</th><th></th></tr></thead>
+        <tbody>
+        {% for m in result.matches %}
+          <tr><td><b>{{ m.name }}</b></td><td>{{ m.location }}</td><td>{{ m.usdot }}</td>
+          <td><a class="btn secondary" href="{{ url_for('carrier_search', q=m.usdot, type='usdot') }}">View</a></td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% if result.total >= 50 %}<p class="muted">Showing the first 50 matches — refine the name to narrow it down.</p>{% endif %}
+    </div>
+  {% elif result.kind == 'local_matches' %}
+    <div class="card">
+      <h2>{{ result.heading }}</h2>
+      {% if result.note %}<p class="muted">{{ result.note }}</p>{% endif %}
+      <div class="table-wrap"><table>
+        <thead><tr><th>MC</th><th>Carrier</th><th>Location</th><th>Phone</th><th>Cargo</th><th></th></tr></thead>
+        <tbody>
+        {% for r in result.rows %}
+          <tr>
+            <td><b>MC-{{ r.mc_number }}</b><br><span class="muted">{{ r.usdot_number and 'USDOT ' + r.usdot_number }}</span></td>
+            <td><b>{{ r.legal_name }}</b>{% if r.dba_name %}<br><span class="muted">DBA: {{ r.dba_name }}</span>{% endif %}</td>
+            <td>{{ r.city }}, {{ r.state }}</td>
+            <td>{% if r.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td>
+            <td>{% for c in r.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}</td>
+            <td><a class="btn secondary" href="{{ url_for('carrier_search', q=r.mc_number, type='mc') }}">Live check</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  {% elif result.kind == 'message' %}
+    <div class="card"><div class="alert">{{ result.text }}</div></div>
+  {% endif %}
+{% endif %}
+
+<script>
+async function copyPhone(btn, phone){
+  if(!phone) return;
+  try { await navigator.clipboard.writeText(phone); }
+  catch(e){
+    const t = document.createElement('textarea');
+    t.value = phone; document.body.appendChild(t); t.select();
+    try { document.execCommand('copy'); } catch(_){}
+    t.remove();
+  }
+  btn.classList.add('copied');
+  const old = btn.textContent;
+  btn.textContent = 'Copied ✓';
+  setTimeout(function(){ btn.textContent = old; btn.classList.remove('copied'); }, 1200);
+}
+</script>
