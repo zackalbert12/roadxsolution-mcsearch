@@ -2,15 +2,15 @@
 {% block title %}Saved MCs{% endblock %}
 {% block content %}
 <div class="hero"><h1>Saved MCs</h1>
-<p>Your shortlist — carriers you starred. Tap a phone number to copy it, then call.</p>
+<p>Your shortlist — carriers you starred. Tap a name, MC or phone number to copy it, then call.</p>
 <p class="next">To save a carrier: open Qualified Carriers and tap the ★ star.</p></div>
 <div class="card"><div class="table-wrap"><table>
   <thead><tr><th>MC</th><th>Carrier</th><th>Phone</th><th>PU</th><th>Cargo</th><th>Calls</th><th>Actions</th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><b>MC-{{ r.mc_number }}</b></td>
-      <td><b>{{ r.legal_name }}</b><br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
+      <td><b><button class="phone-copy" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b></td>
+      <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.legal_name }}</button></b><br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
       <td>{% if r.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td><td>{{ r.power_units }}</td>
       <td>{% for c in r.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}</td>
       <td><span class="calldot {{ r.call_status }}"></span>Calls: {{ r.calls }}</td>

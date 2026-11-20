@@ -3,7 +3,7 @@
 {% block content %}
 <div class="hero"><h1>{{ title }}</h1>
 <p>These are the good ones — authorised carriers with matching cargo. Ready to call.</p>
-<p class="next">What to do: tap a phone number to copy it, then call. Tap the ★ star to save a carrier to Saved MCs.</p>
+<p class="next">What to do: tap a name, MC, DOT or phone number to copy it, then call. Tap the ★ star to save a carrier to Saved MCs.</p>
 <p class="muted">Showing {{ rows|length }} carriers.</p></div>
 
 <div class="card">
@@ -48,8 +48,8 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><b>MC-{{ r.mc_number }}</b><br><span class="muted">{{ r.usdot_number and 'USDOT ' + r.usdot_number }}</span></td>
-      <td><b>{{ r.legal_name }}</b>{% if r.dba_name %}<br><span class="muted">DBA: {{ r.dba_name }}</span>{% endif %}<br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
+      <td><b><button class="phone-copy" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b><br><span class="muted">{% if r.usdot_number %}<button class="phone-copy" data-copy="{{ r.usdot_number }}" onclick="copyText(this)" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}</span></td>
+      <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.legal_name }}</button></b>{% if r.dba_name %}<br><span class="muted">DBA: {{ r.dba_name }}</span>{% endif %}<br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
       <td>{{ r.state }}</td>
       <td><button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button></td>
       <td>{{ r.power_units }}</td>

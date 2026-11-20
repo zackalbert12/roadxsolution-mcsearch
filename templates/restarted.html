@@ -3,15 +3,15 @@
 {% block content %}
 <div class="hero"><h1>Restarted Carriers</h1>
 <p>Carriers that were NOT AUTHORIZED before and are AUTHORIZED now — they came back and can run again.</p>
-<p class="next">Tap a phone number to copy it, then call.</p>
+<p class="next">Tap a name, MC or phone number to copy it, then call.</p>
 <p class="muted">Detected from this site's own check history. (The original pulls FMCSA AuthHist via Motus; there is no public AuthHist feed, so this copy tracks restarts from its own scans.)</p></div>
 <div class="card"><div class="table-wrap"><table>
   <thead><tr><th>MC</th><th>Carrier</th><th>State</th><th>Phone</th><th>PU</th><th>Cargo</th><th>History</th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><b>MC-{{ r.mc_number }}</b></td>
-      <td>{% if r.carrier %}<b>{{ r.carrier.legal_name }}</b>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td><b><button class="phone-copy" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b></td>
+      <td>{% if r.carrier %}<b><button class="phone-copy" data-copy="{{ r.carrier.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.carrier.legal_name }}</button></b>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td>{{ r.carrier.state if r.carrier }}</td>
       <td>{% if r.carrier and r.carrier.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ r.carrier.phone }}')" title="Tap to copy">{{ r.carrier.phone }}</button>{% else %}—{% endif %}</td>
       <td>{{ r.carrier.power_units if r.carrier }}</td>

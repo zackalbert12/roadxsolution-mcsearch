@@ -495,10 +495,10 @@ def _run_carrier_search(q, stype):
         if mc_usable:
             return _detail_result(mc, "MC_MX")
         # Neither is a live carrier: show whichever record exists at all
-        # (e.g. an inactive one), DOT first, else the MC Not Found state.
-        if dot.get("found") and not dot.get("fetch_error"):
-            return _detail_result(dot, "USDOT")
-        return _detail_result(mc, "MC_MX")
+        # (e.g. an inactive one), MC first, else the DOT record.
+        if mc.get("found") and not mc.get("fetch_error"):
+            return _detail_result(mc, "MC_MX")
+        return _detail_result(dot, "USDOT")
     if digits and (len(digits) == 10 or (len(digits) == 11 and digits.startswith("1"))):
         return _run_carrier_search(q, "phone")
     if stripped.isdigit():
