@@ -4,6 +4,7 @@ A dispatcher MC-verification workspace: scan FMCSA MC ranges live against
 SAFER, keep qualified carriers, Motus USDOT checks, notes, pickup lines,
 reports and admin user management. Deployable on Render's free tier.
 """
+import concurrent.futures
 import csv
 import io
 import json
@@ -131,6 +132,12 @@ def _log_check(conn, user_id, scan_id, rec):
 RUNNING_SCANS = {}   # user_id -> {"stop": Event, "thread": Thread}
 RUNNING_MOTUS = {}   # user_id -> {"stop": Event, "thread": Thread}
 
+# Scan speed (like the original site): several MCs are checked at once
+# and SAFER requests rotate through proxies — about 5-7 checks/sec
+# instead of ~1/sec. Tune with ROAD_SCAN_WORKERS (default 10).
+SCAN_WORKERS = max(1, int(os.environ.get("ROAD_SCAN_WORKERS", "10")))
+_DB_WRITE_LOCK = threading.Lock()  # serialise SQLite writes from workers
+
 
 def mark_stale_scans_paused(user_id):
     """A scan whose DB row still says 'running' but has no live thread is a
@@ -149,50 +156,106 @@ def mark_stale_scans_paused(user_id):
         conn.close()
 
 
+def _failed_rec(identifier, exc):
+    """Error-shaped record for a check that raised unexpectedly — one bad
+    MC must never kill the scan."""
+    return {"mc_number": str(identifier), "status": "Error",
+            "note": "Check failed: %s" % exc, "qualified": False,
+            "fetch_error": True, "error": str(exc), "entity_type": "",
+            "usdot_number": "", "legal_name": "", "dba_name": "",
+            "authority_status": "", "cargo_carried": [],
+            "cargo_categories": [], "address_line1": "", "city": "",
+            "state": "", "phone": "", "power_units": ""}
+
+
+def _safe_check_mc(mc, cargo_types):
+    try:
+        return check_mc(mc, cargo_types)
+    except Exception as exc:
+        return _failed_rec(mc, exc)
+
+
+def _safe_check_usdot(usdot, cargo_types):
+    try:
+        return check_usdot(usdot, cargo_types)
+    except Exception as exc:
+        return _failed_rec(usdot, exc)
+
+
+def _write_scan_result(user_id, scan_db_id, scan_id, rec):
+    """Persist one finished check: log + qualified/error rows + counters.
+
+    Runs under the write lock — SQLite writes from parallel workers must
+    not interleave. current_mc tracks the highest MC finished so far
+    (resume continues from there; a stop mid-chunk can skip a few MCs).
+    """
+    mc = int(rec["mc_number"])
+    with _DB_WRITE_LOCK:
+        conn = store.connect()
+        try:
+            _log_check(conn, user_id, scan_id, rec)
+            if rec["qualified"]:
+                conn.execute(
+                    "INSERT INTO carriers (user_id, scan_id, source, mc_number,"
+                    " usdot_number, legal_name, dba_name, entity_type,"
+                    " authority_status, cargo_carried, cargo_categories,"
+                    " address_line1, city, state, phone, power_units, checked_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (user_id, scan_id, "scan", rec["mc_number"],
+                     rec.get("usdot_number") or "", rec.get("legal_name") or "",
+                     rec.get("dba_name") or "", rec.get("entity_type") or "",
+                     rec.get("authority_status") or "",
+                     json.dumps(rec.get("cargo_carried") or []),
+                     json.dumps(rec.get("cargo_categories") or []),
+                     rec.get("address_line1") or "", rec.get("city") or "",
+                     rec.get("state") or "", rec.get("phone") or "",
+                     rec.get("power_units") or "", now_str()))
+            if rec["status"] == "Error":
+                conn.execute(
+                    "INSERT INTO error_mcs (user_id, scan_id, source, mc_number,"
+                    " error, checked_at) VALUES (?,?,?,?,?,?)",
+                    (user_id, scan_id, "scan", rec["mc_number"],
+                     rec.get("note") or "Fetch error", now_str()))
+            conn.execute(
+                "UPDATE scans SET current_mc=MAX(COALESCE(current_mc,0),?),"
+                " checked=checked+1, qualified=qualified+?, errors=errors+?,"
+                " not_found=not_found+? WHERE id=?",
+                (mc, 1 if rec["qualified"] else 0,
+                 1 if rec["status"] == "Error" else 0,
+                 1 if rec["status"] == "Not Found" else 0, scan_db_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+
 def run_scan(user_id, scan_db_id, scan_id, start_mc, end_mc, cargo_types):
-    """Background thread: walk an MC range, checking each against SAFER."""
+    """Background thread: walk an MC range, checking each against SAFER.
+
+    Checks run in parallel (ROAD_SCAN_WORKERS threads, default 5) with
+    rotating proxies — about 5-7 checks/sec instead of ~1/sec.
+    Submitted in small chunks so Stop stays responsive.
+    """
     stop = RUNNING_SCANS[user_id]["stop"]
     started = time.time()
     try:
-        for mc in range(start_mc, end_mc + 1):
-            if stop.is_set():
-                break
-            rec = check_mc(mc, cargo_types)
-            conn = store.connect()
-            try:
-                _log_check(conn, user_id, scan_id, rec)
-                if rec["qualified"]:
-                    conn.execute(
-                        "INSERT INTO carriers (user_id, scan_id, source, mc_number,"
-                        " usdot_number, legal_name, dba_name, entity_type,"
-                        " authority_status, cargo_carried, cargo_categories,"
-                        " address_line1, city, state, phone, power_units, checked_at)"
-                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (user_id, scan_id, "scan", rec["mc_number"],
-                         rec.get("usdot_number") or "", rec.get("legal_name") or "",
-                         rec.get("dba_name") or "", rec.get("entity_type") or "",
-                         rec.get("authority_status") or "",
-                         json.dumps(rec.get("cargo_carried") or []),
-                         json.dumps(rec.get("cargo_categories") or []),
-                         rec.get("address_line1") or "", rec.get("city") or "",
-                         rec.get("state") or "", rec.get("phone") or "",
-                         rec.get("power_units") or "", now_str()))
-                if rec["status"] == "Error":
-                    conn.execute(
-                        "INSERT INTO error_mcs (user_id, scan_id, source, mc_number,"
-                        " error, checked_at) VALUES (?,?,?,?,?,?)",
-                        (user_id, scan_id, "scan", rec["mc_number"],
-                         rec.get("note") or "Fetch error", now_str()))
-                conn.execute(
-                    "UPDATE scans SET current_mc=?, checked=checked+1,"
-                    " qualified=qualified+?, errors=errors+?, not_found=not_found+?"
-                    " WHERE id=?",
-                    (mc, 1 if rec["qualified"] else 0,
-                     1 if rec["status"] == "Error" else 0,
-                     1 if rec["status"] == "Not Found" else 0, scan_db_id))
-                conn.commit()
-            finally:
-                conn.close()
+        mcs = list(range(start_mc, end_mc + 1))
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=SCAN_WORKERS) as ex:
+            for chunk_start in range(0, len(mcs), 10):
+                if stop.is_set():
+                    break
+                chunk = mcs[chunk_start:chunk_start + 10]
+                futs = {ex.submit(_safe_check_mc, mc, cargo_types): mc
+                        for mc in chunk}
+                for fut in concurrent.futures.as_completed(futs):
+                    if stop.is_set():
+                        for f in futs:
+                            f.cancel()
+                        break
+                    _write_scan_result(user_id, scan_db_id, scan_id,
+                                       fut.result())
+                if stop.is_set():
+                    break
     finally:
         duration = int(time.time() - started)
         status = "Stopped" if stop.is_set() else "Completed"
@@ -207,50 +270,71 @@ def run_scan(user_id, scan_db_id, scan_id, start_mc, end_mc, cargo_types):
         RUNNING_SCANS.pop(user_id, None)
 
 
-def run_motus(user_id, run_db_id, kind, usdots, cargo_types):
-    """Background thread: check a pasted list of USDOTs against SAFER."""
-    stop = RUNNING_MOTUS[user_id]["stop"]
+def _write_motus_result(user_id, run_db_id, kind, usdot, rec):
+    """Persist one finished Motus/Register check (same pattern as scans)."""
     source = "motus" if kind == "motus" else "register"
-    try:
-        for usdot in usdots:
-            if stop.is_set():
-                break
-            rec = check_usdot(usdot, cargo_types)
-            conn = store.connect()
-            try:
-                _log_check(conn, user_id, "motus-%s" % run_db_id, rec)
-                if rec["qualified"]:
-                    conn.execute(
-                        "INSERT INTO carriers (user_id, scan_id, source, mc_number,"
-                        " usdot_number, legal_name, dba_name, entity_type,"
-                        " authority_status, cargo_carried, cargo_categories,"
-                        " address_line1, city, state, phone, power_units, checked_at)"
-                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (user_id, "motus-%s" % run_db_id, source,
-                         rec["mc_number"], rec.get("usdot_number") or usdot,
-                         rec.get("legal_name") or "", rec.get("dba_name") or "",
-                         rec.get("entity_type") or "",
-                         rec.get("authority_status") or "",
-                         json.dumps(rec.get("cargo_carried") or []),
-                         json.dumps(rec.get("cargo_categories") or []),
-                         rec.get("address_line1") or "", rec.get("city") or "",
-                         rec.get("state") or "", rec.get("phone") or "",
-                         rec.get("power_units") or "", now_str()))
-                if rec["status"] == "Error":
-                    conn.execute(
-                        "INSERT INTO error_mcs (user_id, scan_id, source, mc_number,"
-                        " error, checked_at) VALUES (?,?,?,?,?,?)",
-                        (user_id, "motus-%s" % run_db_id, source,
-                         rec["mc_number"], rec.get("note") or "Fetch error",
-                         now_str()))
+    with _DB_WRITE_LOCK:
+        conn = store.connect()
+        try:
+            _log_check(conn, user_id, "motus-%s" % run_db_id, rec)
+            if rec["qualified"]:
                 conn.execute(
-                    "UPDATE motus_runs SET checked=checked+1,"
-                    " qualified=qualified+?, errors=errors+? WHERE id=?",
-                    (1 if rec["qualified"] else 0,
-                     1 if rec["status"] == "Error" else 0, run_db_id))
-                conn.commit()
-            finally:
-                conn.close()
+                    "INSERT INTO carriers (user_id, scan_id, source, mc_number,"
+                    " usdot_number, legal_name, dba_name, entity_type,"
+                    " authority_status, cargo_carried, cargo_categories,"
+                    " address_line1, city, state, phone, power_units, checked_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (user_id, "motus-%s" % run_db_id, source,
+                     rec["mc_number"], rec.get("usdot_number") or usdot,
+                     rec.get("legal_name") or "", rec.get("dba_name") or "",
+                     rec.get("entity_type") or "",
+                     rec.get("authority_status") or "",
+                     json.dumps(rec.get("cargo_carried") or []),
+                     json.dumps(rec.get("cargo_categories") or []),
+                     rec.get("address_line1") or "", rec.get("city") or "",
+                     rec.get("state") or "", rec.get("phone") or "",
+                     rec.get("power_units") or "", now_str()))
+            if rec["status"] == "Error":
+                conn.execute(
+                    "INSERT INTO error_mcs (user_id, scan_id, source, mc_number,"
+                    " error, checked_at) VALUES (?,?,?,?,?,?)",
+                    (user_id, "motus-%s" % run_db_id, source,
+                     rec["mc_number"], rec.get("note") or "Fetch error",
+                     now_str()))
+            conn.execute(
+                "UPDATE motus_runs SET checked=checked+1,"
+                " qualified=qualified+?, errors=errors+? WHERE id=?",
+                (1 if rec["qualified"] else 0,
+                 1 if rec["status"] == "Error" else 0, run_db_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def run_motus(user_id, run_db_id, kind, usdots, cargo_types):
+    """Background thread: check a pasted list of USDOTs against SAFER.
+
+    Same parallel + proxy engine as run_scan, in small chunks.
+    """
+    stop = RUNNING_MOTUS[user_id]["stop"]
+    try:
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=SCAN_WORKERS) as ex:
+            for chunk_start in range(0, len(usdots), 10):
+                if stop.is_set():
+                    break
+                chunk = usdots[chunk_start:chunk_start + 10]
+                futs = {ex.submit(_safe_check_usdot, u, cargo_types): u
+                        for u in chunk}
+                for fut in concurrent.futures.as_completed(futs):
+                    if stop.is_set():
+                        for f in futs:
+                            f.cancel()
+                        break
+                    _write_motus_result(user_id, run_db_id, kind,
+                                        futs[fut], fut.result())
+                if stop.is_set():
+                    break
     finally:
         conn = store.connect()
         try:
@@ -322,7 +406,7 @@ def login():
                         " WHERE id=?", (now_str(), user["id"]))
                     conn.commit()
                     session["user_id"] = user["id"]
-                    session.permanent = True
+                    session.permanent = bool(request.form.get("remember"))
                     return redirect(url_for("dashboard"))
                 conn.commit()
                 error = "Invalid username/email or password."

@@ -4,10 +4,16 @@ Uses the public SAFER query endpoint:
   https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY
     &query_type=queryCarrierSnapshot&query_param=MC_MX|USDOT&query_string=<id>
 
-Be polite to SAFER: sequential fetches, a short delay between requests,
-timeouts, and exponential-ish backoff on 429/503/5xx before giving up.
+Be polite to SAFER: sequential fetches per worker, a short delay between
+requests, timeouts, and exponential-ish backoff on 429/503/5xx before
+giving up. Checks go through rotating proxies (like the original site)
+so one IP never hammers SAFER: ROAD_PROXIES env wins, otherwise a free
+public list is fetched and cached, and a stale list can never stall a
+scan — the last attempt is always direct.
 """
+import os
 import re
+import threading
 import time
 import random
 import requests
@@ -23,9 +29,58 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 TIMEOUT = 20
-DELAY = 0.6          # seconds between SAFER requests (plus jitter)
+DELAY = 0.6          # seconds between SAFER requests per worker (plus jitter)
 MAX_RETRIES = 3
 BACKOFF = (5, 15, 30)  # seconds per retry on 429/503/5xx or network error
+
+# --- proxies -------------------------------------------------------------
+PROXY_LIST_URL = os.environ.get(
+    "ROAD_PROXY_LIST_URL",
+    "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http"
+    "&timeout=10000&country=all&ssl=all&anonymity=all")
+PROXY_CACHE_TTL = 600  # seconds
+_PROXY_POOL = {"list": [], "fetched_at": 0.0, "idx": 0,
+               "lock": threading.Lock()}
+
+
+def _load_proxies():
+    """Proxy list: ROAD_PROXIES env (comma-separated http://host:port)
+    wins; otherwise fetch a free public list (cached 10 min).
+    Returns [] when proxies are disabled (ROAD_NO_PROXY=1) or none
+    could be loaded — callers then fetch direct."""
+    if os.environ.get("ROAD_NO_PROXY") == "1":
+        return []
+    env = os.environ.get("ROAD_PROXIES", "").strip()
+    if env:
+        return [p.strip() for p in env.split(",") if p.strip()]
+    now = time.time()
+    with _PROXY_POOL["lock"]:
+        if _PROXY_POOL["list"] and now - _PROXY_POOL["fetched_at"] < PROXY_CACHE_TTL:
+            return list(_PROXY_POOL["list"])
+    try:
+        resp = requests.get(PROXY_LIST_URL, timeout=10, headers=HEADERS)
+        proxies = []
+        if resp.status_code == 200:
+            for line in resp.text.splitlines():
+                line = line.strip()
+                if re.match(r"^\d+\.\d+\.\d+\.\d+:\d+$", line):
+                    proxies.append("http://" + line)
+        with _PROXY_POOL["lock"]:
+            _PROXY_POOL["list"] = proxies
+            _PROXY_POOL["fetched_at"] = now
+        return proxies
+    except requests.RequestException:
+        return []
+
+
+def _next_proxy(proxies):
+    """Round-robin pick from the pool (thread-safe); None = direct."""
+    if not proxies:
+        return None
+    with _PROXY_POOL["lock"]:
+        proxy = proxies[_PROXY_POOL["idx"] % len(proxies)]
+        _PROXY_POOL["idx"] += 1
+    return proxy
 
 # SAFER cargo names that map to the "fresh" and "reefer" categories.
 FRESH_CARGO = {"Fresh Produce"}
@@ -195,15 +250,32 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY):
         "query_param": param,
         "query_string": str(identifier),
     }
+    # Attempt plan: rotate through proxies first (like the original site),
+    # then one final direct attempt so a stale free-proxy list can never
+    # stall the check entirely.
+    proxies = _load_proxies()
+    attempts = []
+    seen = set()
+    for _ in range(MAX_RETRIES):
+        p = _next_proxy(proxies)
+        if p and p not in seen:
+            attempts.append(p)
+            seen.add(p)
+    attempts.append(None)  # direct
     last_err = None
-    for attempt in range(MAX_RETRIES + 1):
+    for attempt, proxy in enumerate(attempts):
         try:
+            req_proxies = {"http": proxy, "https": proxy} if proxy else None
+            # Proxy attempts get a short timeout: a dead/blackhole proxy
+            # must not stall the check. Direct attempts keep the full one.
             resp = requests.get(SAFER_URL, params=params, headers=HEADERS,
-                                timeout=TIMEOUT)
+                                timeout=(8 if proxy else TIMEOUT),
+                                proxies=req_proxies)
             if resp.status_code in (429, 503) or resp.status_code >= 500:
+                # SAFER itself is rate-limiting: wait, then retry.
                 last_err = "HTTP %s from SAFER" % resp.status_code
-                if attempt < MAX_RETRIES:
-                    time.sleep(BACKOFF[attempt])
+                if attempt < len(attempts) - 1:
+                    time.sleep(BACKOFF[min(attempt, len(BACKOFF) - 1)])
                     continue
                 return _error_record(identifier, last_err), last_err
             resp.raise_for_status()
@@ -215,8 +287,9 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY):
             return rec, None
         except requests.RequestException as exc:
             last_err = "Fetch error: %s" % exc
-            if attempt < MAX_RETRIES:
-                time.sleep(BACKOFF[attempt])
+            if attempt < len(attempts) - 1:
+                # Dead proxy: rotate immediately, no sleep — the next
+                # proxy is a different IP, so waiting helps nothing.
                 continue
             return _error_record(identifier, last_err), last_err
     return _error_record(identifier, last_err or "Fetch error"), last_err

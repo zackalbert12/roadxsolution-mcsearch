@@ -53,8 +53,10 @@ Branded **RoadxSolution-mcsearch** everywhere — not "Truck Services Solutions"
 - Motus date-range register/AuthHist pulls have no public FMCSA feed, so
   those pages check USDOT numbers you paste (same live SAFER check).
 - Restarted Carriers is detected from this site's own check history.
-- Scan speed is the real rate of direct SAFER fetches (~1 check/sec with
-  politeness delays) — slower than the original's proxy-based ~400/min.
+- Scan speed: checks run in parallel (10 workers by default) and rotate
+  through proxies, like the original — measured ~205 checks/min direct
+  locally (was ~1 check/sec sequential). The original's ~400/min uses
+  proxies too; ours falls back to direct fetching when no proxy works.
 - Qualification rule here is transparent: AUTHORIZED for-hire carrier whose
   cargo matches a selected type. The original had an extra, undisclosed
   server-side check (some authorised + general-freight carriers were
@@ -72,6 +74,18 @@ python app.py
 
 Optional env vars: `PORT` (default 5000), `SECRET_KEY` (set a long random
 value in production), `ROAD_DB_PATH` (SQLite file location).
+
+Scan speed (like the original site, which uses proxies): checks run in
+parallel (default 10 workers — `ROAD_SCAN_WORKERS` to tune) and SAFER
+requests rotate through proxies. Proxies: set `ROAD_PROXIES` to a
+comma-separated list of `http://host:port` proxies (your own or a paid
+service); otherwise the app tries a free public proxy list
+(`ROAD_PROXY_LIST_URL` to override it) and falls back to direct fetching
+when no proxy works — a dead proxy list can never stall a scan.
+`ROAD_NO_PROXY=1` disables proxies entirely. Measured locally:
+~205 checks/min with 10 workers direct (was ~60/min sequential).
+Note: stopping a scan mid-chunk and resuming can skip a few MCs (under
+10); scans are otherwise exact.
 
 ## Deploy on Render (free tier)
 

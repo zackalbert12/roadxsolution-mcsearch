@@ -9,7 +9,7 @@
     <tr>
       <td><b>MC-{{ r.mc_number }}</b></td>
       <td><b>{{ r.legal_name }}</b><br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
-      <td>{{ r.state }}</td><td>{{ r.phone }}</td><td>{{ r.power_units }}</td>
+      <td>{% if r.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td><td>{{ r.power_units }}</td>
       <td>{% for c in r.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}</td>
       <td><span class="calldot {{ r.call_status }}"></span>Calls: {{ r.calls }}</td>
       <td><button class="star on" onclick="toggleStar({{ r.id }}, this)" title="Unstar">★</button></td>
@@ -20,6 +20,20 @@
   </tbody>
 </table></div></div>
 <script>
+async function copyPhone(btn, phone){
+  if(!phone) return;
+  try { await navigator.clipboard.writeText(phone); }
+  catch(e){
+    const t = document.createElement('textarea');
+    t.value = phone; document.body.appendChild(t); t.select();
+    try { document.execCommand('copy'); } catch(_){}
+    t.remove();
+  }
+  btn.classList.add('copied');
+  const old = btn.textContent;
+  btn.textContent = 'Copied ✓';
+  setTimeout(function(){ btn.textContent = old; btn.classList.remove('copied'); }, 1200);
+}
 async function toggleStar(id, btn){
   const r = await fetch('/api/carrier/' + id + '/star', {method:'POST'});
   const d = await r.json();

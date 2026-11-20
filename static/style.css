@@ -153,3 +153,8 @@ tr:hover td { background: #fafafa; }
 .flash { background: #fef3c7; color: #92400e; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; }
 .empty { text-align: center; color: var(--grey-text); padding: 30px; }
 .line-card { font-size: 17px; line-height: 1.6; color: var(--navy); }
+
+/* tap-to-copy phone numbers (Qualified Carriers, Saved, Restarted) */
+.phone-copy { background: none; border: none; padding: 0; margin: 0; font: inherit; color: var(--orange); cursor: pointer; text-align: left; white-space: nowrap; }
+.phone-copy:hover { text-decoration: underline; }
+.phone-copy.copied { color: #16a34a; }
