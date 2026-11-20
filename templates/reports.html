@@ -1,16 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Reports{% endblock %}
 {% block content %}
-<div class="hero"><h1>Reports</h1><p>Totals across all scans on this account.</p></div>
+<div class="hero"><h1>Reports</h1>
+<p>Your totals — how many carriers you checked, how many were good, and where they are.</p></div>
 <div class="grid cols-4" style="margin-bottom:18px">
-  <div class="stat"><div class="label">Total Scanned</div><div class="value">{{ checked }}</div></div>
-  <div class="stat"><div class="label">Qualified</div><div class="value green">{{ qualified }}</div></div>
-  <div class="stat"><div class="label">Qualification Rate</div><div class="value orange">{{ rate }}%</div></div>
-  <div class="stat"><div class="label">Saved MCs</div><div class="value">{{ saved }}</div></div>
+  <div class="stat"><div class="label">Total Scanned</div><div class="value">{{ checked }}</div><div class="hint">MCs checked in total</div></div>
+  <div class="stat"><div class="label">Qualified</div><div class="value green">{{ qualified }}</div><div class="hint">good ones, ready to call</div></div>
+  <div class="stat"><div class="label">Qualification Rate</div><div class="value orange">{{ rate }}%</div><div class="hint">out of every 100 checked</div></div>
+  <div class="stat"><div class="label">Saved MCs</div><div class="value">{{ saved }}</div><div class="hint">starred by you</div></div>
 </div>
 <div class="grid cols-2">
   <div class="card">
     <h2>Cargo tallies</h2>
+    <p class="muted">How many qualified carriers haul each cargo type.</p>
     <p><span class="pill orange">General Freight</span> {{ cargo_tally.general }}</p>
     <p><span class="pill green">Fresh Produce</span> {{ cargo_tally.fresh }}</p>
     <p><span class="pill blue">Reefer</span> {{ cargo_tally.reefer }}</p>
@@ -18,10 +20,15 @@
   </div>
   <div class="card">
     <h2>Top 10 States</h2>
+    <p class="muted">Where the qualified carriers are based.</p>
     {% for s, n in top_states %}
       <p><b>{{ s }}</b> — {{ n }}</p>
     {% else %}
-      <p class="empty">No carriers yet.</p>
+      <div class="empty-state">
+        <h3>No carriers yet</h3>
+        <p>Run a scan first — then this page will show where the good carriers are.</p>
+        <a class="btn" href="{{ url_for('dashboard') }}">Go to MC Scanner</a>
+      </div>
     {% endfor %}
   </div>
 </div>
@@ -37,5 +44,12 @@
     {% endfor %}
     </tbody>
   </table></div>
+  {% if not daily %}
+  <div class="empty-state">
+    <h3>No scan activity yet</h3>
+    <p>Run a scan and it will show up here, day by day.</p>
+    <a class="btn" href="{{ url_for('dashboard') }}">Go to MC Scanner</a>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

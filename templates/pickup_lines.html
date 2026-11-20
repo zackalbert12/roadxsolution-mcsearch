@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Pickup Lines{% endblock %}
 {% block content %}
-<div class="hero"><h1>Pickup Lines</h1><p>Call openers that get carriers talking — pick a category or search.</p></div>
+<div class="hero"><h1>Pickup Lines</h1>
+<p>Short lines to start a call — pick one, tap Copy, then say it on the phone.</p>
+<p class="next">What to do: pick a category, or search for a word like “Monday”.</p></div>
 <div class="card">
   <div style="margin-bottom:12px">
     <a class="btn {% if not category %}secondary{% endif %} small" href="{{ url_for('pickup_lines') }}">All</a>
@@ -11,8 +13,8 @@
   </div>
   <form method="get" class="form-row">
     {% if category %}<input type="hidden" name="category" value="{{ category }}">{% endif %}
-    <div><input type="text" name="q" value="{{ q }}" placeholder="Search lines…"></div>
-    <div><button class="btn" type="submit">Search</button></div>
+    <div><label>Search lines — type a word, e.g. Monday</label><input type="text" name="q" value="{{ q }}" placeholder="Search lines…"></div>
+    <div><label>&nbsp;</label><button class="btn" type="submit">Search</button></div>
   </form>
 </div>
 <div class="card">
@@ -23,7 +25,10 @@
       <button class="btn secondary small" onclick="navigator.clipboard.writeText({{ t|tojson }});this.textContent='Copied!';">Copy</button>
     </div>
   {% else %}
-    <p class="empty">No lines match.</p>
+    <div class="empty-state">
+      <h3>No lines match</h3>
+      <p>Try a different word, or pick another category above.</p>
+    </div>
   {% endfor %}
 </div>
 {% endblock %}

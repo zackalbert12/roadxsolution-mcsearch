@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Scan History{% endblock %}
 {% block content %}
-<div class="hero"><h1>Scan History</h1><p>Every MC-range scan and Motus run on this account.</p></div>
+<div class="hero"><h1>Scan History</h1>
+<p>Every scan you ran — what range, how many checked, how many were good.</p>
+<p class="next">To run a new scan, go to the MC Scanner page.</p></div>
 <div class="card"><div class="table-wrap"><table>
   <thead><tr><th>Date</th><th>Scan ID</th><th>Start MC</th><th>End MC</th><th>Checked</th><th>Qualified</th><th>Errors</th><th>Not Found</th><th>Duration</th><th>Status</th></tr></thead>
   <tbody>
@@ -16,7 +18,15 @@
     <tr><td colspan="10" class="empty">No scans yet.</td></tr>
   {% endfor %}
   </tbody>
-</table></div></div>
+</table></div>
+{% if not scans %}
+<div class="empty-state">
+  <h3>No scans yet</h3>
+  <p>Run your first scan on the MC Scanner page — pick an MC range and press Start Scanning.</p>
+  <a class="btn" href="{{ url_for('dashboard') }}">Go to MC Scanner</a>
+</div>
+{% endif %}
+</div>
 {% if runs %}
 <div class="card"><h2>Motus runs</h2><div class="table-wrap"><table>
   <thead><tr><th>Date</th><th>Type</th><th>Label</th><th>Total</th><th>Checked</th><th>Qualified</th><th>Errors</th><th>Status</th></tr></thead>
@@ -26,5 +36,11 @@
   {% endfor %}
   </tbody>
 </table></div></div>
+{% else %}
+<div class="card"><div class="empty-state">
+  <h3>No Motus runs yet</h3>
+  <p>Run a Motus search and it will show up here.</p>
+  <a class="btn" href="{{ url_for('motus_search') }}">Go to Motus Search</a>
+</div></div>
 {% endif %}
 {% endblock %}

@@ -4,11 +4,12 @@
 <div class="auth-wrap">
   <div class="auth-card">
     <h1>Forgot Password</h1>
+    <p class="muted" style="text-align:center">Type your email — the admin will give you a one-time code to reset your password.</p>
     {% if message %}<div class="notice">{{ message }}</div>{% endif %}
     {% if error %}<div class="alert">{{ error }}</div>{% endif %}
     <form method="post">
       <label>Email</label>
-      <input type="email" name="email" required>
+      <input type="email" name="email" placeholder="you@example.com" required>
       <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Request Reset Code</button></div>
     </form>
     <p style="text-align:center;margin-top:14px"><a href="{{ url_for('reset_password') }}">I have a code — reset my password</a> · <a href="{{ url_for('login') }}">Back to login</a></p>

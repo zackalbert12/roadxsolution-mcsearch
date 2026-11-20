@@ -2,7 +2,9 @@
 {% block title %}Restarted Carriers{% endblock %}
 {% block content %}
 <div class="hero"><h1>Restarted Carriers</h1>
-<p>Carriers seen NOT AUTHORIZED in an earlier check and AUTHORIZED in a later check — detected from this site's own check history. (The original pulls FMCSA AuthHist via Motus; there is no public AuthHist feed, so this copy tracks restarts from its own scans.)</p></div>
+<p>Carriers that were NOT AUTHORIZED before and are AUTHORIZED now — they came back and can run again.</p>
+<p class="next">Tap a phone number to copy it, then call.</p>
+<p class="muted">Detected from this site's own check history. (The original pulls FMCSA AuthHist via Motus; there is no public AuthHist feed, so this copy tracks restarts from its own scans.)</p></div>
 <div class="card"><div class="table-wrap"><table>
   <thead><tr><th>MC</th><th>Carrier</th><th>State</th><th>Phone</th><th>PU</th><th>Cargo</th><th>History</th></tr></thead>
   <tbody>
@@ -17,10 +19,18 @@
       <td>{% for h in r.history %}<div class="muted">{{ h }}</div>{% endfor %}</td>
     </tr>
   {% else %}
-    <tr><td colspan="7" class="empty">No restarted carriers found yet — they appear once a carrier is checked as not authorised and later as authorised.</td></tr>
+    <tr><td colspan="7" class="empty">No restarted carriers yet.</td></tr>
   {% endfor %}
   </tbody>
-</table></div></div>
+</table></div>
+{% if not rows %}
+<div class="empty-state">
+  <h3>No restarted carriers yet</h3>
+  <p>They appear here when a carrier that was not authorised becomes authorised.</p>
+  <a class="btn" href="{{ url_for('dashboard') }}">Go to MC Scanner</a>
+</div>
+{% endif %}
+</div>
 <script>
 async function copyPhone(btn, phone){
   if(!phone) return;

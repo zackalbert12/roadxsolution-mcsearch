@@ -1,22 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Settings{% endblock %}
 {% block content %}
-<div class="hero"><h1>Settings</h1><p>Account, scanner defaults, appearance and notifications.</p></div>
+<div class="hero"><h1>Settings</h1>
+<p>Your account and how the scanner works. Change anything here, then press Save.</p></div>
 {% if message %}<div class="notice">{{ message }}</div>{% endif %}
 
 <div class="card">
   <h2>Account</h2>
+  <p class="muted">Who you are — and change your password here.</p>
   <p><b>Username:</b> {{ user.username }}<br><b>Email:</b> {{ user.email }}<br><b>Plan:</b> {{ user.plan }} — $0</p>
   <form method="post">
     <input type="hidden" name="section" value="password">
-    <label>Current password</label><input type="password" name="current_password" required>
-    <label>New password</label><input type="password" name="new_password" required minlength="6">
+    <label>Current password</label><input type="password" name="current_password" placeholder="Your current password" required>
+    <label>New password</label><input type="password" name="new_password" placeholder="At least 6 characters" required minlength="6">
     <div style="margin-top:14px"><button class="btn" type="submit">Change Password</button></div>
   </form>
 </div>
 
 <div class="card">
   <h2>Scanner</h2>
+  <p class="muted">Which cargo the scanner keeps as Qualified. Untick a type to skip those carriers.</p>
   <form method="post">
     <input type="hidden" name="section" value="scanner">
     <label>Cargo Types</label>
@@ -29,6 +32,7 @@
 
 <div class="card">
   <h2>Appearance</h2>
+  <p class="muted">How the site looks on your screen.</p>
   <form method="post">
     <input type="hidden" name="section" value="appearance">
     <div class="form-row">
@@ -58,6 +62,7 @@
 
 <div class="card">
   <h2>Notifications</h2>
+  <p class="muted">Which emails you want to get.</p>
   <form method="post">
     <input type="hidden" name="section" value="notifications">
     <label class="checkbox"><input type="checkbox" name="notify_email" {% if settings.notify_email %}checked{% endif %}> Email Notifications</label>
@@ -70,6 +75,7 @@
 
 <div class="card">
   <h2>Danger Zone</h2>
+  <p class="muted">Be careful — Export downloads all your data, Delete removes your account and everything in it. This cannot be undone.</p>
   <p><a class="btn secondary" href="{{ url_for('export_data') }}">Export My Data</a></p>
   <form method="post" action="{{ url_for('delete_account') }}" onsubmit="return confirm('Delete your account and all its data? This cannot be undone.')">
     <button class="btn danger" type="submit">Delete My Account</button>

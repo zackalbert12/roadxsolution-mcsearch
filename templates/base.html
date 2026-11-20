@@ -14,20 +14,25 @@
     <div class="tag">MC Scanner &amp; Dispatch Tools</div>
   </div>
   <nav>
-    <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint=='dashboard' %}active{% endif %}">Dashboard</a>
+    <div class="nav-group">Search</div>
     <a href="{{ url_for('carrier_search') }}" class="{% if request.endpoint=='carrier_search' %}active{% endif %}">Carrier Search</a>
-    <a href="{{ url_for('qualified') }}" class="{% if request.endpoint=='qualified' %}active{% endif %}">Qualified Carriers</a>
+    <div class="nav-group">Scan</div>
+    <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint=='dashboard' %}active{% endif %}">MC Scanner</a>
     <a href="{{ url_for('motus_search') }}" class="{% if request.endpoint=='motus_search' %}active{% endif %}">Motus Search</a>
-    <a href="{{ url_for('motus_qualified') }}" class="{% if request.endpoint=='motus_qualified' %}active{% endif %}">Motus Qualified</a>
     <a href="{{ url_for('motus_register_search') }}" class="{% if request.endpoint=='motus_register_search' %}active{% endif %}">Motus Register</a>
+    <div class="nav-group">Carriers</div>
+    <a href="{{ url_for('qualified') }}" class="{% if request.endpoint=='qualified' %}active{% endif %}">Qualified Carriers</a>
+    <a href="{{ url_for('motus_qualified') }}" class="{% if request.endpoint=='motus_qualified' %}active{% endif %}">Motus Qualified</a>
     <a href="{{ url_for('register_qualified') }}" class="{% if request.endpoint=='register_qualified' %}active{% endif %}">Register Qualified</a>
     <a href="{{ url_for('restarted') }}" class="{% if request.endpoint=='restarted' %}active{% endif %}">Restarted Carriers</a>
     <a href="{{ url_for('saved') }}" class="{% if request.endpoint=='saved' %}active{% endif %}">Saved MCs</a>
-    <a href="{{ url_for('notes') }}" class="{% if request.endpoint=='notes' %}active{% endif %}">Create Notes</a>
+    <div class="nav-group">Tools</div>
+    <a href="{{ url_for('notes') }}" class="{% if request.endpoint=='notes' %}active{% endif %}">Notes</a>
     <a href="{{ url_for('pickup_lines') }}" class="{% if request.endpoint=='pickup_lines' %}active{% endif %}">Pickup Lines</a>
     <a href="{{ url_for('history') }}" class="{% if request.endpoint=='history' %}active{% endif %}">Scan History</a>
     <a href="{{ url_for('errors_page') }}" class="{% if request.endpoint=='errors_page' %}active{% endif %}">Error MCs</a>
     <a href="{{ url_for('reports') }}" class="{% if request.endpoint=='reports' %}active{% endif %}">Reports</a>
+    <div class="nav-group">Account</div>
     <a href="{{ url_for('settings_page') }}" class="{% if request.endpoint=='settings_page' %}active{% endif %}">Settings</a>
     {% if user.is_admin %}<a href="{{ url_for('admin_page') }}" class="{% if request.endpoint=='admin_page' %}active{% endif %}">Admin</a>{% endif %}
     <a href="{{ url_for('about') }}" class="{% if request.endpoint=='about' %}active{% endif %}">About Us</a>

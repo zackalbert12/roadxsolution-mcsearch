@@ -4,6 +4,7 @@
 <div class="auth-wrap">
   <div class="auth-card">
     <h1>Reset Password</h1>
+    <p class="muted" style="text-align:center">Type your email, the one-time code from the admin, and a new password.</p>
     {% if done %}
       <div class="notice">Password updated. You can now log in with your new password.</div>
       <p style="text-align:center"><a href="{{ url_for('login') }}">Go to login</a></p>
@@ -11,11 +12,11 @@
       {% if error %}<div class="alert">{{ error }}</div>{% endif %}
       <form method="post">
         <label>Email</label>
-        <input type="email" name="email" required>
+        <input type="email" name="email" placeholder="you@example.com" required>
         <label>One-time code (from the admin)</label>
-        <input type="text" name="code" required>
+        <input type="text" name="code" placeholder="Code from the admin" required>
         <label>New password</label>
-        <input type="password" name="password" required minlength="6">
+        <input type="password" name="password" placeholder="At least 6 characters" required minlength="6">
         <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Set New Password</button></div>
       </form>
       <p style="text-align:center;margin-top:14px"><a href="{{ url_for('login') }}">Back to login</a></p>

@@ -3,15 +3,21 @@
 {% block content %}
 <div class="hero">
   <h1>MC Scanner</h1>
-  <p>Scan a range of FMCSA MC numbers live against SAFER. Authorised carriers whose cargo matches your selected types are kept as Qualified.</p>
+  <p>Check a whole range of MC numbers at once — we look up each one live on FMCSA SAFER and keep only the good carriers.</p>
+  <p class="next">What to do: type a Start MC and an End MC below, then press Start Scanning.</p>
+  <div class="steps">
+    <div class="step"><b class="num">1</b> Type the MC range</div>
+    <div class="step"><b class="num">2</b> Press Start Scanning</div>
+    <div class="step"><b class="num">3</b> Call the Qualified carriers</div>
+  </div>
 </div>
 
 <div class="card">
   <form id="scan-form" onsubmit="return startScan(event)">
     <div class="form-row">
-      <div><label>Start MC</label><input type="number" id="start_mc" name="start_mc" placeholder="000000"></div>
-      <div><label>End MC</label><input type="number" id="end_mc" name="end_mc" placeholder="000000"></div>
-      <div><label>Commodity filter</label>
+      <div><label>Start MC — first number in the range</label><input type="number" id="start_mc" name="start_mc" placeholder="e.g. 1630000"></div>
+      <div><label>End MC — last number in the range</label><input type="number" id="end_mc" name="end_mc" placeholder="e.g. 1630100"></div>
+      <div><label>Commodity filter — only show carriers that haul this</label>
         <select id="commodity" onchange="applyCommodity(this.value)">
           <option value="">All commodities</option>
           {% for c in commodities %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
@@ -40,6 +46,7 @@
   <div class="stat"><div class="label">Time Left</div><div class="value" id="st-eta">--:--</div></div>
   <div class="stat"><div class="label">Speed</div><div class="value orange" id="st-speed">0/min</div></div>
 </div>
+<p class="muted" style="margin:-6px 0 18px">Qualified = authorised carriers with matching cargo — these are the ones to call. Not Found = no SAFER record for that MC. Errors = the check failed, try again later.</p>
 
 <div class="grid cols-2">
   <div class="card">
@@ -49,6 +56,8 @@
       <tbody id="log-body">
         {% for r in log %}
         <tr><td>MC-{{ r.mc_number }}</td><td>{{ r.status }}</td><td>{{ r.entity }}</td><td>{{ r.power_units }}</td><td>{{ r.cargo }}</td><td>{{ r.checked_at }}</td><td>{{ r.note }}</td></tr>
+        {% else %}
+        <tr><td colspan="7" class="empty">No checks yet — start a scan above and the results will show up here, newest first.</td></tr>
         {% endfor %}
       </tbody>
     </table></div>
@@ -63,6 +72,7 @@
     </div>
     <div class="card">
       <h2>Smart Pickup Line</h2>
+      <p class="muted">Say this when a carrier answers the phone.</p>
       <p class="line-card" id="pickup-line">Hi, this is Zack from RoadxSolution — are you set for next week, or do you need a load for Monday?</p>
       <button class="btn secondary small" onclick="copyLine()">Copy Line</button>
       <button class="btn secondary small" onclick="anotherLine()">Get Another Line</button>

@@ -5,6 +5,7 @@
   <div class="auth-card">
     <h1>RoadxSolution<br>mcsearch</h1>
     <p style="text-align:center">Sign in to your dispatcher workspace</p>
+    <p class="muted" style="text-align:center">Log in to scan MC numbers and see your carriers. New here? Press Sign Up below.</p>
     {% if error %}<div class="alert">{{ error }}</div>{% endif %}
     <div class="tabs">
       <button id="tab-login" class="active" onclick="showTab('login')">Log In</button>
@@ -14,9 +15,9 @@
       <form method="post" action="{{ url_for('login') }}">
         <input type="hidden" name="form" value="login">
         <label>Username or Email</label>
-        <input type="text" name="identifier" required>
+        <input type="text" name="identifier" placeholder="Username or email" required>
         <label>Password</label>
-        <input type="password" name="password" required>
+        <input type="password" name="password" placeholder="Your password" required>
         <label class="checkbox" style="margin-top:12px"><input type="checkbox" name="remember" value="1" checked> Remember me</label>
         <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Sign In</button></div>
       </form>
@@ -27,14 +28,14 @@
       <form method="post" action="{{ url_for('login') }}">
         <input type="hidden" name="form" value="signup">
         <label>Email</label>
-        <input type="email" name="email" required>
+        <input type="email" name="email" placeholder="you@example.com" required>
         <label>Username</label>
-        <input type="text" name="username" required>
+        <input type="text" name="username" placeholder="Pick a username" required>
         <label>Password</label>
-        <input type="password" name="password" required minlength="6">
+        <input type="password" name="password" placeholder="At least 6 characters" required minlength="6">
         <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Create Account</button></div>
       </form>
-      <p class="muted" style="text-align:center;margin-top:12px">The first account created becomes the site admin.</p>
+      <p class="muted" style="text-align:center;margin-top:12px">Create your account to get started — it takes less than a minute. The first account created becomes the site admin.</p>
     </div>
   </div>
 </div>

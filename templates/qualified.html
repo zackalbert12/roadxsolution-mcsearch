@@ -2,17 +2,19 @@
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
 <div class="hero"><h1>{{ title }}</h1>
-<p>Results ({{ rows|length }}) — authorised carriers whose cargo matches your selected types.</p></div>
+<p>These are the good ones — authorised carriers with matching cargo. Ready to call.</p>
+<p class="next">What to do: tap a phone number to copy it, then call. Tap the ★ star to save a carrier to Saved MCs.</p>
+<p class="muted">Showing {{ rows|length }} carriers.</p></div>
 
 <div class="card">
   <form method="get" class="form-row">
-    <div><label>Search</label><input type="text" name="q" value="{{ f.q }}" placeholder="Name, MC, phone, city"></div>
-    <div><label>State</label>
+    <div><label>Search — name, MC, phone or city</label><input type="text" name="q" value="{{ f.q }}" placeholder="Name, MC, phone, city"></div>
+    <div><label>State — where the carrier is based</label>
       <select name="state"><option value="">All states</option>
       {% for s in states %}<option value="{{ s }}" {% if f.state==s %}selected{% endif %}>{{ s }}</option>{% endfor %}
       </select>
     </div>
-    <div><label>Cargo</label>
+    <div><label>Cargo — what the truck hauls</label>
       <select name="cargo">
         <option value="">All cargo</option>
         <option value="general" {% if f.cargo=='general' %}selected{% endif %}>General Freight</option>
@@ -20,13 +22,13 @@
         <option value="reefer" {% if f.cargo=='reefer' %}selected{% endif %}>Refrigerated Food</option>
       </select>
     </div>
-    <div><label>Commodity</label>
+    <div><label>Commodity — what the carrier hauls</label>
       <select name="commodity">
         <option value="">All commodities</option>
         {% for c in commodities %}<option value="{{ c }}" {% if f.commodity==c %}selected{% endif %}>{{ c }}</option>{% endfor %}
       </select>
     </div>
-    <div><label>Sort</label>
+    <div><label>Sort by</label>
       <select name="sort">
         <option value="mc" {% if f.sort=='mc' %}selected{% endif %}>MC number</option>
         <option value="name" {% if f.sort=='name' %}selected{% endif %}>Name</option>
@@ -67,10 +69,19 @@
       </td>
     </tr>
   {% else %}
-    <tr><td colspan="8" class="empty">No carriers yet — run a scan from the Dashboard, or a Motus run.</td></tr>
+    <tr><td colspan="8" class="empty">No carriers here yet.</td></tr>
   {% endfor %}
   </tbody>
-</table></div></div>
+</table></div>
+{% if not rows %}
+<div class="empty-state">
+  <h3>No carriers here yet</h3>
+  <p>Run a scan on the MC Scanner page, or a Motus run — the good carriers will show up here, ready to call.</p>
+  <a class="btn" href="{{ url_for('dashboard') }}">Go to MC Scanner</a>
+  <a class="btn secondary" href="{{ url_for('carrier_search') }}">Search a carrier</a>
+</div>
+{% endif %}
+</div>
 
 <script>
 async function copyPhone(btn, phone){

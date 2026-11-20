@@ -1,20 +1,22 @@
 {% extends "base.html" %}
-{% block title %}Create Notes{% endblock %}
+{% block title %}Notes{% endblock %}
 {% block content %}
-<div class="hero"><h1>Create Notes</h1><p>Keep call notes against any MC number.</p></div>
+<div class="hero"><h1>Notes</h1>
+<p>Write a note about any carrier — what you talked about, what to do next.</p>
+<p class="next">What to do: fill in the form on the left and press Save Note.</p></div>
 <div class="grid cols-2">
   <div class="card">
     <h2>New note</h2>
     <form method="post">
-      <label>MC Number</label><input type="text" name="mc_number" placeholder="e.g. 1788002">
-      <label>Note Title</label><input type="text" name="title" placeholder="Called carrier">
-      <label>Note</label><textarea name="text" rows="4"></textarea>
-      <label>Tags (comma-separated)</label><input type="text" name="tags" placeholder="reefer, follow-up">
-      <label>Priority</label>
+      <label>MC Number — which carrier is this note about?</label><input type="text" name="mc_number" placeholder="e.g. 1788002">
+      <label>Note Title — a short name for this note</label><input type="text" name="title" placeholder="e.g. Called carrier — wants reefer loads">
+      <label>Note — what happened, what to do next</label><textarea name="text" rows="4" placeholder="e.g. Spoke to the owner, truck is empty in Dallas on Monday, call back Friday."></textarea>
+      <label>Tags — words to find this note later (comma-separated)</label><input type="text" name="tags" placeholder="reefer, follow-up">
+      <label>Priority — how urgent is this?</label>
       <select name="priority">
         <option>Low</option><option selected>Normal</option><option>High</option><option>Urgent</option>
       </select>
-      <label>Reminder Date</label><input type="date" name="reminder_date">
+      <label>Reminder Date — when should you look at this again?</label><input type="date" name="reminder_date">
       <div style="margin-top:16px"><button class="btn" type="submit">Save Note</button></div>
     </form>
   </div>
@@ -32,7 +34,10 @@
         </form>
       </div>
     {% else %}
-      <p class="empty">No notes yet.</p>
+      <div class="empty-state">
+        <h3>No notes yet</h3>
+        <p>Write your first note using the form on the left.</p>
+      </div>
     {% endfor %}
   </div>
 </div>

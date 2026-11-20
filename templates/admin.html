@@ -1,10 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Admin{% endblock %}
 {% block content %}
-<div class="hero"><h1>Admin — Users &amp; Access</h1><p>Only the site admin sees this page.</p></div>
+<div class="hero"><h1>Admin — Users &amp; Access</h1>
+<p>Only the site admin sees this page. See everyone who signed up, set a password for someone, and share reset codes.</p></div>
 
 <div class="card">
   <h2>Signed-up Users ({{ users|length }})</h2>
+  <p class="muted">To help a user who forgot their password, type a new password in their row and press Set — then tell them the new password.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Admin</th><th>Plan</th><th>Signed Up</th><th>Last Login</th><th>Logins</th><th>Set Password</th></tr></thead>
     <tbody>
@@ -38,11 +40,11 @@
         <td>{{ r.created_at }}</td><td>{{ r.expires_at }}</td><td>{{ 'Yes' if r.used else 'No' }}</td>
       </tr>
     {% else %}
-      <tr><td colspan="5" class="empty">No reset requests.</td></tr>
+      <tr><td colspan="5" class="empty">No reset requests yet.</td></tr>
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="muted">Relay the one-time code to the user — they enter it on the Reset Password page.</p>
+  <p class="muted">Relay the one-time code to the user — they enter it on the Reset Password page. When someone asks for a reset code, it will show up here.</p>
 </div>
 
 <div class="card">
@@ -59,5 +61,6 @@
     {% endfor %}
     </tbody>
   </table></div>
+  <p class="muted">Every login — good or bad — shows up here, newest first.</p>
 </div>
 {% endblock %}
