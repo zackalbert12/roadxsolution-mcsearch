@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="hero"><h1>Settings</h1><p>Account, scanner defaults, appearance and notifications.</p></div>
+{% if message %}<div class="notice">{{ message }}</div>{% endif %}
+
+<div class="card">
+  <h2>Account</h2>
+  <p><b>Username:</b> {{ user.username }}<br><b>Email:</b> {{ user.email }}<br><b>Plan:</b> {{ user.plan }} — $0</p>
+  <form method="post">
+    <input type="hidden" name="section" value="password">
+    <label>Current password</label><input type="password" name="current_password" required>
+    <label>New password</label><input type="password" name="new_password" required minlength="6">
+    <div style="margin-top:14px"><button class="btn" type="submit">Change Password</button></div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Scanner</h2>
+  <form method="post">
+    <input type="hidden" name="section" value="scanner">
+    <label>Cargo Types</label>
+    <label class="checkbox"><input type="checkbox" name="cargo_general" {% if settings.cargo_general %}checked{% endif %}> General Freight</label>
+    <label class="checkbox"><input type="checkbox" name="cargo_fresh" {% if settings.cargo_fresh %}checked{% endif %}> Fresh Produce</label>
+    <label class="checkbox"><input type="checkbox" name="cargo_reefer" {% if settings.cargo_reefer %}checked{% endif %}> Refrigerated Food</label>
+    <div style="margin-top:14px"><button class="btn" type="submit">Save Scanner Settings</button></div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Appearance</h2>
+  <form method="post">
+    <input type="hidden" name="section" value="appearance">
+    <div class="form-row">
+      <div><label>Theme</label>
+        <select name="theme">
+          <option {% if settings.theme=='Light' %}selected{% endif %}>Light</option>
+          <option {% if settings.theme=='Dark' %}selected{% endif %}>Dark</option>
+          <option {% if settings.theme=='System' %}selected{% endif %}>System</option>
+        </select>
+      </div>
+      <div><label>Layout</label>
+        <select name="layout">
+          <option {% if settings.layout=='Comfortable' %}selected{% endif %}>Comfortable</option>
+          <option {% if settings.layout=='Compact' %}selected{% endif %}>Compact</option>
+        </select>
+      </div>
+      <div><label>Sidebar</label>
+        <select name="sidebar">
+          <option {% if settings.sidebar=='Expanded' %}selected{% endif %}>Expanded</option>
+          <option {% if settings.sidebar=='Collapsed' %}selected{% endif %}>Collapsed</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:14px"><button class="btn" type="submit">Save Appearance</button></div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Notifications</h2>
+  <form method="post">
+    <input type="hidden" name="section" value="notifications">
+    <label class="checkbox"><input type="checkbox" name="notify_email" {% if settings.notify_email %}checked{% endif %}> Email Notifications</label>
+    <label class="checkbox"><input type="checkbox" name="notify_scan" {% if settings.notify_scan %}checked{% endif %}> Scan Completion Alerts</label>
+    <label class="checkbox"><input type="checkbox" name="notify_qualified" {% if settings.notify_qualified %}checked{% endif %}> New Qualified Carrier Alerts</label>
+    <label class="checkbox"><input type="checkbox" name="notify_weekly" {% if settings.notify_weekly %}checked{% endif %}> Weekly Summary Reports</label>
+    <div style="margin-top:14px"><button class="btn" type="submit">Save Changes</button></div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Danger Zone</h2>
+  <p><a class="btn secondary" href="{{ url_for('export_data') }}">Export My Data</a></p>
+  <form method="post" action="{{ url_for('delete_account') }}" onsubmit="return confirm('Delete your account and all its data? This cannot be undone.')">
+    <button class="btn danger" type="submit">Delete My Account</button>
+  </form>
+</div>
+{% endblock %}

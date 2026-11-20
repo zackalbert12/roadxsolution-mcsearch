@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Admin{% endblock %}
+{% block content %}
+<div class="hero"><h1>Admin — Users &amp; Access</h1><p>Only the site admin sees this page.</p></div>
+
+<div class="card">
+  <h2>Signed-up Users ({{ users|length }})</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Admin</th><th>Plan</th><th>Signed Up</th><th>Last Login</th><th>Logins</th><th>Set Password</th></tr></thead>
+    <tbody>
+    {% for u in users %}
+      <tr>
+        <td>{{ u.id }}</td><td><b>{{ u.username }}</b></td><td>{{ u.email }}</td>
+        <td>{{ 'Yes' if u.is_admin else 'No' }}</td><td>{{ u.plan }}</td>
+        <td>{{ u.created_at }}</td><td>{{ u.last_login or '—' }}</td><td>{{ u.login_count }}</td>
+        <td>
+          <form method="post" action="{{ url_for('admin_set_password') }}" style="display:flex;gap:6px">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <input type="text" name="new_password" placeholder="New password" style="width:130px;padding:6px">
+            <button class="btn small" type="submit">Set</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+<div class="card">
+  <h2>Password Reset Requests</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>User</th><th>Code</th><th>Requested</th><th>Expires</th><th>Used</th></tr></thead>
+    <tbody>
+    {% for r in resets %}
+      <tr>
+        <td>{{ r.username }} ({{ r.email }})</td>
+        <td><b>{{ r.code if not r.used else '— used —' }}</b></td>
+        <td>{{ r.created_at }}</td><td>{{ r.expires_at }}</td><td>{{ 'Yes' if r.used else 'No' }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="empty">No reset requests.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted">Relay the one-time code to the user — they enter it on the Reset Password page.</p>
+</div>
+
+<div class="card">
+  <h2>Login Activity (latest 50)</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Time</th><th>User ID</th><th>Identifier</th><th>Result</th><th>IP</th></tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr><td>{{ e.created_at }}</td><td>{{ e.user_id or '—' }}</td><td>{{ e.identifier }}</td>
+      <td><span class="pill {% if e.success %}green{% else %}red{% endif %}">{{ 'Success' if e.success else 'Failed' }}</span></td>
+      <td>{{ e.ip }}</td></tr>
+    {% else %}
+      <tr><td colspan="5" class="empty">No login activity yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

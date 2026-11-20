@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Scan History{% endblock %}
+{% block content %}
+<div class="hero"><h1>Scan History</h1><p>Every MC-range scan and Motus run on this account.</p></div>
+<div class="card"><div class="table-wrap"><table>
+  <thead><tr><th>Date</th><th>Scan ID</th><th>Start MC</th><th>End MC</th><th>Checked</th><th>Qualified</th><th>Errors</th><th>Not Found</th><th>Duration</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for s in scans %}
+    <tr>
+      <td>{{ s.started_at }}</td><td>{{ s.scan_id }}</td><td>{{ s.start_mc }}</td><td>{{ s.end_mc }}</td>
+      <td>{{ s.checked }}</td><td>{{ s.qualified }}</td><td>{{ s.errors }}</td><td>{{ s.not_found }}</td>
+      <td>{{ '%02d:%02d' % ((s.duration_seconds or 0)//60, (s.duration_seconds or 0)%60) }}</td>
+      <td><span class="pill {% if s.status=='Completed' %}green{% else %}yellow{% endif %}">{{ s.status }}</span></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="10" class="empty">No scans yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div></div>
+{% if runs %}
+<div class="card"><h2>Motus runs</h2><div class="table-wrap"><table>
+  <thead><tr><th>Date</th><th>Type</th><th>Label</th><th>Total</th><th>Checked</th><th>Qualified</th><th>Errors</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for r in runs %}
+    <tr><td>{{ r.created_at }}</td><td>{{ r.kind }}</td><td>{{ r.label }}</td><td>{{ r.total }}</td><td>{{ r.checked }}</td><td>{{ r.qualified }}</td><td>{{ r.errors }}</td><td>{{ r.status }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div></div>
+{% endif %}
+{% endblock %}

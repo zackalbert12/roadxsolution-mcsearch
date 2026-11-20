@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="hero"><h1>{{ title }}</h1>
+<p>Results ({{ rows|length }}) — authorised carriers whose cargo matches your selected types.</p></div>
+
+<div class="card">
+  <form method="get" class="form-row">
+    <div><label>Search</label><input type="text" name="q" value="{{ f.q }}" placeholder="Name, MC, phone, city"></div>
+    <div><label>State</label>
+      <select name="state"><option value="">All states</option>
+      {% for s in states %}<option value="{{ s }}" {% if f.state==s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+      </select>
+    </div>
+    <div><label>Cargo</label>
+      <select name="cargo">
+        <option value="">All cargo</option>
+        <option value="general" {% if f.cargo=='general' %}selected{% endif %}>General Freight</option>
+        <option value="fresh" {% if f.cargo=='fresh' %}selected{% endif %}>Fresh Produce</option>
+        <option value="reefer" {% if f.cargo=='reefer' %}selected{% endif %}>Refrigerated Food</option>
+      </select>
+    </div>
+    <div><label>Commodity</label>
+      <select name="commodity">
+        <option value="">All commodities</option>
+        {% for c in commodities %}<option value="{{ c }}" {% if f.commodity==c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+      </select>
+    </div>
+    <div><label>Sort</label>
+      <select name="sort">
+        <option value="mc" {% if f.sort=='mc' %}selected{% endif %}>MC number</option>
+        <option value="name" {% if f.sort=='name' %}selected{% endif %}>Name</option>
+        <option value="state" {% if f.sort=='state' %}selected{% endif %}>State</option>
+        <option value="pu" {% if f.sort=='pu' %}selected{% endif %}>Power units</option>
+      </select>
+    </div>
+    <div><label>&nbsp;</label><label class="checkbox"><input type="checkbox" name="starred" value="1" {% if f.starred %}checked{% endif %}> Starred only</label></div>
+    <div><label>&nbsp;</label><button class="btn" type="submit">Filter</button></div>
+    <div><label>&nbsp;</label><a class="btn secondary" href="{{ export_url }}">Export CSV</a></div>
+  </form>
+  {% if f.commodity %}<p class="muted" style="margin-top:10px">Commodity filter: <b>{{ f.commodity }}</b> — showing carriers whose trucks haul it.</p>{% endif %}
+</div>
+
+<div class="card"><div class="table-wrap"><table>
+  <thead><tr><th>MC</th><th>Carrier</th><th>State</th><th>Phone</th><th>PU</th><th>Cargo</th><th>Calls</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><b>MC-{{ r.mc_number }}</b><br><span class="muted">{{ r.usdot_number and 'USDOT ' + r.usdot_number }}</span></td>
+      <td><b>{{ r.legal_name }}</b>{% if r.dba_name %}<br><span class="muted">DBA: {{ r.dba_name }}</span>{% endif %}<br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
+      <td>{{ r.state }}</td>
+      <td>{{ r.phone }}</td>
+      <td>{{ r.power_units }}</td>
+      <td>{% for c in r.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}</td>
+      <td>
+        <span class="calldot {{ r.call_status }}"></span>
+        <span id="calls-{{ r.id }}">Calls: {{ r.calls }}</span><br>
+        <select onchange="setCall({{ r.id }}, this.value)" style="width:110px;padding:4px;margin-top:4px">
+          <option value="none" {% if r.call_status=='none' %}selected{% endif %}>No status</option>
+          <option value="call" {% if r.call_status=='call' %}selected{% endif %}>Call</option>
+          <option value="callback" {% if r.call_status=='callback' %}selected{% endif %}>Call Back</option>
+          <option value="dnc" {% if r.call_status=='dnc' %}selected{% endif %}>Do Not Call</option>
+        </select>
+      </td>
+      <td>
+        <button class="star {% if r.starred %}on{% endif %}" onclick="toggleStar({{ r.id }}, this)" title="Star / save">★</button>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="empty">No carriers yet — run a scan from the Dashboard, or a Motus run.</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div></div>
+
+<script>
+async function toggleStar(id, btn){
+  const r = await fetch('/api/carrier/' + id + '/star', {method:'POST'});
+  const d = await r.json();
+  if (d.ok) btn.classList.toggle('on', !!d.starred);
+}
+async function setCall(id, status){
+  const r = await fetch('/api/carrier/' + id + '/call-status', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({status: status})});
+  const d = await r.json();
+  if (d.ok) document.getElementById('calls-' + id).textContent = 'Calls: ' + d.calls;
+}
+</script>
+{% endblock %}

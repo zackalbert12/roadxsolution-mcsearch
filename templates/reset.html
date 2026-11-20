@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Reset Password{% endblock %}
+{% block auth %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>Reset Password</h1>
+    {% if done %}
+      <div class="notice">Password updated. You can now log in with your new password.</div>
+      <p style="text-align:center"><a href="{{ url_for('login') }}">Go to login</a></p>
+    {% else %}
+      {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+      <form method="post">
+        <label>Email</label>
+        <input type="email" name="email" required>
+        <label>One-time code (from the admin)</label>
+        <input type="text" name="code" required>
+        <label>New password</label>
+        <input type="password" name="password" required minlength="6">
+        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Set New Password</button></div>
+      </form>
+      <p style="text-align:center;margin-top:14px"><a href="{{ url_for('login') }}">Back to login</a></p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

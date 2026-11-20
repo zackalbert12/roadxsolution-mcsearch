@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Create Notes{% endblock %}
+{% block content %}
+<div class="hero"><h1>Create Notes</h1><p>Keep call notes against any MC number.</p></div>
+<div class="grid cols-2">
+  <div class="card">
+    <h2>New note</h2>
+    <form method="post">
+      <label>MC Number</label><input type="text" name="mc_number" placeholder="e.g. 1788002">
+      <label>Note Title</label><input type="text" name="title" placeholder="Called carrier">
+      <label>Note</label><textarea name="text" rows="4"></textarea>
+      <label>Tags (comma-separated)</label><input type="text" name="tags" placeholder="reefer, follow-up">
+      <label>Priority</label>
+      <select name="priority">
+        <option>Low</option><option selected>Normal</option><option>High</option><option>Urgent</option>
+      </select>
+      <label>Reminder Date</label><input type="date" name="reminder_date">
+      <div style="margin-top:16px"><button class="btn" type="submit">Save Note</button></div>
+    </form>
+  </div>
+  <div class="card">
+    <h2>All Notes ({{ rows|length }})</h2>
+    {% for n in rows %}
+      <div style="border-bottom:1px solid #f3f4f6;padding:10px 0">
+        <b>{{ n.title or 'Note' }}</b>
+        {% if n.mc_number %}<span class="pill orange">MC-{{ n.mc_number }}</span>{% endif %}
+        <span class="pill {% if n.priority=='Urgent' %}red{% elif n.priority=='High' %}yellow{% else %}grey{% endif %}">{{ n.priority }}</span>
+        <p>{{ n.text }}</p>
+        <div class="muted">{{ n.tags }}{% if n.reminder_date %} · Reminder: {{ n.reminder_date }}{% endif %} · {{ n.created_at }}</div>
+        <form method="post" action="{{ url_for('delete_note', nid=n.id) }}" style="margin-top:6px">
+          <button class="btn secondary small" type="submit">Delete</button>
+        </form>
+      </div>
+    {% else %}
+      <p class="empty">No notes yet.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="hero">
+  <h1>MC Scanner</h1>
+  <p>Scan a range of FMCSA MC numbers live against SAFER. Authorised carriers whose cargo matches your selected types are kept as Qualified.</p>
+</div>
+
+<div class="card">
+  <form id="scan-form" onsubmit="return startScan(event)">
+    <div class="form-row">
+      <div><label>Start MC</label><input type="number" id="start_mc" name="start_mc" placeholder="000000"></div>
+      <div><label>End MC</label><input type="number" id="end_mc" name="end_mc" placeholder="000000"></div>
+      <div><label>Commodity filter</label>
+        <select id="commodity" onchange="applyCommodity(this.value)">
+          <option value="">All commodities</option>
+          {% for c in commodities %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+      </div>
+      <div><button class="btn" id="btn-start" type="submit">Start Scanning</button></div>
+      <div><button class="btn" id="btn-resume" type="button" onclick="resumeScan()" style="display:none">Resume Scan</button></div>
+      <div><button class="btn secondary" id="btn-stop" type="button" onclick="stopScan()" disabled>Stop</button></div>
+      <div><a class="btn secondary" href="{{ url_for('api_scan_csv') }}">Download CSV</a></div>
+    </div>
+    <p class="muted" id="commodity-note" style="display:none"></p>
+    <p class="notice" id="scan-message" style="display:none"></p>
+  </form>
+  <div style="margin-top:14px">
+    <div class="progress"><div id="bar" style="width:0%"></div></div>
+    <p class="muted" id="progress-text">Idle — no scan running.</p>
+  </div>
+</div>
+
+<div class="grid cols-7" style="margin-bottom:18px">
+  <div class="stat"><div class="label">Checked</div><div class="value" id="st-checked">0</div></div>
+  <div class="stat"><div class="label">Qualified</div><div class="value green" id="st-qualified">0</div></div>
+  <div class="stat"><div class="label">Errors</div><div class="value red" id="st-errors">0</div></div>
+  <div class="stat"><div class="label">Not Found</div><div class="value" id="st-notfound">0</div></div>
+  <div class="stat"><div class="label">Elapsed</div><div class="value" id="st-elapsed">00:00</div></div>
+  <div class="stat"><div class="label">Time Left</div><div class="value" id="st-eta">--:--</div></div>
+  <div class="stat"><div class="label">Speed</div><div class="value orange" id="st-speed">0/min</div></div>
+</div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h2>Live Log — Showing latest 25</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>MC</th><th>Status</th><th>Entity</th><th>PU</th><th>Cargo</th><th>Checked At</th><th>Note</th></tr></thead>
+      <tbody id="log-body">
+        {% for r in log %}
+        <tr><td>MC-{{ r.mc_number }}</td><td>{{ r.status }}</td><td>{{ r.entity }}</td><td>{{ r.power_units }}</td><td>{{ r.cargo }}</td><td>{{ r.checked_at }}</td><td>{{ r.note }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  <div>
+    <div class="card">
+      <h2>Cargo Type Guide</h2>
+      <p><span class="pill green">Fresh</span> Perishable goods — fresh produce</p>
+      <p><span class="pill blue">Reefer</span> Temperature controlled — refrigerated food</p>
+      <p><span class="pill orange">General Freight</span> Dry / general cargo</p>
+      <p class="muted">Scanner checks: General Freight, Fresh Produce, Refrigerated Food (change in Settings → Scanner).</p>
+    </div>
+    <div class="card">
+      <h2>Smart Pickup Line</h2>
+      <p class="line-card" id="pickup-line">Hi, this is Zack from RoadxSolution — are you set for next week, or do you need a load for Monday?</p>
+      <button class="btn secondary small" onclick="copyLine()">Copy Line</button>
+      <button class="btn secondary small" onclick="anotherLine()">Get Another Line</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const LINES = [
+  "Hi, this is Zack from RoadxSolution — are you set for next week, or do you need a load for Monday?",
+  "Good morning — do you need a load for today? Send me the zip where your truck is empty and I'll check what's around.",
+  "Quick question — where will your truck be empty on Monday morning? I'll line up loads so you don't start the week sitting.",
+  "Hi, this is Zack. I have reefer freight moving this week — is your reefer empty, and where?",
+  "Hi — got fresh produce loads posting. Is your truck free for a produce run?",
+  "Hi, this is Zack from RoadxSolution. We find loads for carriers before they even hit the load boards — do you have a truck running right now?"
+];
+let li = 0;
+function anotherLine(){ li = (li + 1) % LINES.length; document.getElementById('pickup-line').textContent = LINES[li]; }
+function copyLine(){ navigator.clipboard.writeText(document.getElementById('pickup-line').textContent); }
+function fmt(s){ s = Math.max(0, Math.floor(s||0)); return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0'); }
+function pill(status){
+  if (status === 'Qualified') return '<span class="pill green">Qualified</span>';
+  if (status === 'Not Found') return '<span class="pill red">Not Found</span>';
+  if (status === 'Error') return '<span class="pill red">Error</span>';
+  return '<span class="pill yellow">' + status + '</span>';
+}
+async function poll(){
+  try {
+    const r = await fetch('{{ url_for("api_status") }}');
+    const d = await r.json();
+    document.getElementById('st-checked').textContent = d.current + (d.total ? ' / ' + d.total : '');
+    document.getElementById('st-qualified').textContent = d.results_count;
+    document.getElementById('st-errors').textContent = d.error_count;
+    document.getElementById('st-notfound').textContent = d.not_found_count;
+    document.getElementById('st-elapsed').textContent = fmt(d.elapsed_seconds);
+    document.getElementById('st-eta').textContent = d.running ? fmt(d.eta_seconds) : '--:--';
+    document.getElementById('st-speed').textContent = d.rate_per_min + '/min';
+    const pct = d.total ? Math.round(d.current / d.total * 100) : 0;
+    document.getElementById('bar').style.width = pct + '%';
+    if (d.status === 'Paused') {
+      document.getElementById('progress-text').textContent = 'Paused — scan MC-' + d.start_mc + ' → MC-' + d.end_mc + ' stopped at ' + d.current + ' checked, ' + d.results_count + ' qualified. It will not start on its own — press Resume Scan to continue.';
+    } else {
+      document.getElementById('progress-text').textContent = d.running
+        ? pct + '% — Scanning MC-' + d.start_mc + ' → MC-' + d.end_mc + ' (' + d.status + ')'
+        : (d.total ? 'Last scan: ' + d.status + ' — ' + d.current + ' checked, ' + d.results_count + ' qualified.' : 'Idle — no scan running.');
+    }
+    document.getElementById('btn-start').disabled = d.running;
+    document.getElementById('btn-stop').disabled = !d.running;
+    document.getElementById('btn-resume').style.display = d.can_resume ? '' : 'none';
+    const body = document.getElementById('log-body');
+    body.innerHTML = d.recent_log.map(x =>
+      '<tr><td>' + x.mc_number + '</td><td>' + pill(x.status) + '</td><td>' + (x.entity||'') + '</td><td>' + (x.power_units||'') + '</td><td>' + (x.cargo||'') + '</td><td>' + x.checked_at + '</td><td>' + (x.note||'') + '</td></tr>').join('');
+  } catch(e) {}
+  setTimeout(poll, 1500);
+}
+function showScanMessage(msg){
+  const el = document.getElementById('scan-message');
+  el.textContent = msg;
+  el.style.display = '';
+}
+async function startScan(ev){
+  ev.preventDefault();
+  const s = document.getElementById('start_mc').value.trim();
+  const e = document.getElementById('end_mc').value.trim();
+  if (!s || !e) {
+    showScanMessage('Enter the MC numbers first — type the Start MC and End MC, then press Start Scanning.');
+    return false;
+  }
+  document.getElementById('scan-message').style.display = 'none';
+  const fd = new FormData();
+  fd.append('start_mc', s);
+  fd.append('end_mc', e);
+  const r = await fetch('{{ url_for("api_start_scan") }}', {method:'POST', body: fd});
+  const d = await r.json();
+  if (!d.ok) showScanMessage(d.error || 'Could not start scan.');
+  return false;
+}
+async function resumeScan(){
+  const r = await fetch('{{ url_for("api_resume_scan") }}', {method:'POST'});
+  const d = await r.json();
+  if (!d.ok) showScanMessage(d.error || 'Could not resume scan.');
+  else showScanMessage('Scan resumed from MC-' + d.resumed_from + '.');
+}
+async function stopScan(){
+  await fetch('{{ url_for("api_stop_scan") }}', {method:'POST'});
+}
+function applyCommodity(v){
+  const note = document.getElementById('commodity-note');
+  if (!v) { note.style.display = 'none'; return; }
+  note.style.display = '';
+  note.innerHTML = 'Commodity <b>' + v + '</b> selected — after the scan, open <a href="{{ url_for("qualified") }}?commodity=' + encodeURIComponent(v) + '">Qualified Carriers</a> filtered by ' + v + ' to see matching MCs.';
+}
+poll();
+</script>
+{% endblock %}

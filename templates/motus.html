@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="hero"><h1>{{ title }}</h1>
+<p>FMCSA AuthHist / Daily Register data has no public feed, so paste USDOT numbers from a Motus register or AuthHist listing — each one is checked live against SAFER with the same qualification rules as a scan.</p></div>
+
+<div class="card">
+  <form method="post">
+    <label>Paste USDOT numbers (one per line, or comma / space separated)</label>
+    <textarea name="usdots" rows="6" placeholder="4218222&#10;4236233&#10;..."></textarea>
+    <div style="margin-top:14px">
+      <button class="btn" type="submit" {% if running %}disabled{% endif %}>Search</button>
+      <button class="btn secondary" type="button" onclick="stopMotus()" {% if not running %}disabled{% endif %}>Stop</button>
+    </div>
+  </form>
+  <p class="muted">Tip: most brand-new applications will still be pending / not authorised — that is normal.</p>
+</div>
+
+<div class="grid cols-4" style="margin-bottom:18px">
+  <div class="stat"><div class="label">Checked</div><div class="value" id="m-checked">0</div></div>
+  <div class="stat"><div class="label">Qualified</div><div class="value green" id="m-qualified">0</div></div>
+  <div class="stat"><div class="label">Errors</div><div class="value red" id="m-errors">0</div></div>
+  <div class="stat"><div class="label">Status</div><div class="value" id="m-status">Idle</div></div>
+</div>
+
+<div class="card">
+  <h2>Live Log — Showing latest 25</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>MC</th><th>Status</th><th>Entity</th><th>PU</th><th>Cargo</th><th>Checked At</th><th>Note</th></tr></thead>
+    <tbody id="log-body">
+      {% for r in log %}
+      <tr><td>MC-{{ r.mc_number }}</td><td>{{ r.status }}</td><td>{{ r.entity }}</td><td>{{ r.power_units }}</td><td>{{ r.cargo }}</td><td>{{ r.checked_at }}</td><td>{{ r.note }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+<div class="card">
+  <h2>Recent runs</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Date</th><th>Label</th><th>Total</th><th>Checked</th><th>Qualified</th><th>Errors</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for r in runs %}
+      <tr><td>{{ r.created_at }}</td><td>{{ r.label }}</td><td>{{ r.total }}</td><td>{{ r.checked }}</td><td>{{ r.qualified }}</td><td>{{ r.errors }}</td><td>{{ r.status }}</td></tr>
+    {% else %}
+      <tr><td colspan="7" class="empty">No runs yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+<script>
+function pill(status){
+  if (status === 'Qualified') return '<span class="pill green">Qualified</span>';
+  if (status === 'Not Found') return '<span class="pill red">Not Found</span>';
+  if (status === 'Error') return '<span class="pill red">Error</span>';
+  return '<span class="pill yellow">' + status + '</span>';
+}
+async function poll(){
+  try {
+    const r = await fetch('{{ url_for("api_motus_status") }}?kind={{ kind }}');
+    const d = await r.json();
+    document.getElementById('m-checked').textContent = d.checked + ' / ' + d.total;
+    document.getElementById('m-qualified').textContent = d.qualified;
+    document.getElementById('m-errors').textContent = d.errors;
+    document.getElementById('m-status').textContent = d.running ? 'Running…' : (d.status || 'Idle');
+    document.getElementById('log-body').innerHTML = d.recent_log.map(x =>
+      '<tr><td>' + x.mc_number + '</td><td>' + pill(x.status) + '</td><td>' + (x.entity||'') + '</td><td>' + (x.power_units||'') + '</td><td>' + (x.cargo||'') + '</td><td>' + x.checked_at + '</td><td>' + (x.note||'') + '</td></tr>').join('');
+  } catch(e) {}
+  setTimeout(poll, 1500);
+}
+async function stopMotus(){ await fetch('{{ url_for("api_motus_stop") }}', {method:'POST'}); }
+poll();
+</script>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Restarted Carriers{% endblock %}
+{% block content %}
+<div class="hero"><h1>Restarted Carriers</h1>
+<p>Carriers seen NOT AUTHORIZED in an earlier check and AUTHORIZED in a later check — detected from this site's own check history. (The original pulls FMCSA AuthHist via Motus; there is no public AuthHist feed, so this copy tracks restarts from its own scans.)</p></div>
+<div class="card"><div class="table-wrap"><table>
+  <thead><tr><th>MC</th><th>Carrier</th><th>State</th><th>Phone</th><th>PU</th><th>Cargo</th><th>History</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><b>MC-{{ r.mc_number }}</b></td>
+      <td>{% if r.carrier %}<b>{{ r.carrier.legal_name }}</b>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td>{{ r.carrier.state if r.carrier }}</td>
+      <td>{{ r.carrier.phone if r.carrier }}</td>
+      <td>{{ r.carrier.power_units if r.carrier }}</td>
+      <td>{% if r.carrier %}{% for c in r.carrier.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}{% endif %}</td>
+      <td>{% for h in r.history %}<div class="muted">{{ h }}</div>{% endfor %}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="empty">No restarted carriers found yet — they appear once a carrier is checked as not authorised and later as authorised.</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div></div>
+{% endblock %}

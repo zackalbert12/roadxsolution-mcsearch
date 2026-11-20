@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Log In{% endblock %}
+{% block auth %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>RoadxSolution<br>mcsearch</h1>
+    <p style="text-align:center">Sign in to your dispatcher workspace</p>
+    {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+    <div class="tabs">
+      <button id="tab-login" class="active" onclick="showTab('login')">Log In</button>
+      <button id="tab-signup" onclick="showTab('signup')">Sign Up</button>
+    </div>
+    <div id="pane-login">
+      <form method="post" action="{{ url_for('login') }}">
+        <input type="hidden" name="form" value="login">
+        <label>Username or Email</label>
+        <input type="text" name="identifier" required>
+        <label>Password</label>
+        <input type="password" name="password" required>
+        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Sign In</button></div>
+      </form>
+      <p style="text-align:center;margin-top:14px"><a href="{{ url_for('forgot') }}">Forgot Password?</a></p>
+    </div>
+    <div id="pane-signup" style="display:none">
+      <form method="post" action="{{ url_for('login') }}">
+        <input type="hidden" name="form" value="signup">
+        <label>Email</label>
+        <input type="email" name="email" required>
+        <label>Username</label>
+        <input type="text" name="username" required>
+        <label>Password</label>
+        <input type="password" name="password" required minlength="6">
+        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Create Account</button></div>
+      </form>
+      <p class="muted" style="text-align:center;margin-top:12px">The first account created becomes the site admin.</p>
+    </div>
+  </div>
+</div>
+<script>
+function showTab(which) {
+  document.getElementById('pane-login').style.display = which === 'login' ? '' : 'none';
+  document.getElementById('pane-signup').style.display = which === 'signup' ? '' : 'none';
+  document.getElementById('tab-login').className = which === 'login' ? 'active' : '';
+  document.getElementById('tab-signup').className = which === 'signup' ? 'active' : '';
+}
+</script>
+{% endblock %}

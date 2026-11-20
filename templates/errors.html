@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Error MCs{% endblock %}
+{% block content %}
+<div class="hero"><h1>Error MCs</h1><p>MCs whose SAFER check failed (network or SAFER errors). Retry re-checks them live.</p></div>
+<div class="card"><div class="table-wrap"><table>
+  <thead><tr><th>MC</th><th>Date Checked</th><th>Status</th><th>Error</th><th>Actions</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><b>MC-{{ r.mc_number }}</b></td>
+      <td>{{ r.checked_at }}</td>
+      <td><span class="pill red">Error</span></td>
+      <td>{{ r.error }}</td>
+      <td><form method="post" action="{{ url_for('retry_error', eid=r.id) }}"><button class="btn small" type="submit">Retry</button></form></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5" class="empty">No error MCs — good.</td></tr>
+  {% endfor %}
+  </tbody>
+</table></div></div>
+{% endblock %}
