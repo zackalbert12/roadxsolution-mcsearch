@@ -339,6 +339,51 @@ def classify(rec, selected_cargo=("general", "fresh", "reefer")):
     return "Qualified", "", True
 
 
+# --- FMCSA MCMIS Company Census (owner / officer name) --------------------
+# The SAFER snapshot does not publish an owner name, but the public MCMIS
+# Company Census File on data.transportation.gov does: fields
+# company_officer_1 / company_officer_2, looked up by USDOT number.
+# Used ONLY for the public carrier-search detail page — never during scans
+# (one extra request per check would slow scans and hit Socrata limits).
+# Socrata throttles anonymous requests (HTTP 429), so any failure just
+# means "no owner shown". Set ROAD_SOCRATA_APP_TOKEN (free, from
+# data.transportation.gov) to raise the limit.
+CENSUS_URL = "https://data.transportation.gov/resource/az4n-8mr2.json"
+CENSUS_TIMEOUT = 4
+_OFFICER_CACHE = {}
+
+
+def fetch_company_officer(dot_number):
+    """Owner/officer name for a USDOT number from the MCMIS census file.
+    Returns the name string, or None when unknown/unavailable."""
+    dot = "".join(ch for ch in str(dot_number or "") if ch.isdigit())
+    if not dot:
+        return None
+    if dot in _OFFICER_CACHE:
+        return _OFFICER_CACHE[dot]
+    name = None
+    try:
+        headers = {"Accept": "application/json"}
+        token = os.environ.get("ROAD_SOCRATA_APP_TOKEN", "").strip()
+        if token:
+            headers["X-App-Token"] = token
+        r = requests.get(CENSUS_URL, params={
+            "dot_number": dot,
+            "$select": "company_officer_1,company_officer_2",
+            "$limit": "1",
+        }, headers=headers, timeout=CENSUS_TIMEOUT)
+        if r.status_code == 200:
+            rows = r.json()
+            if rows:
+                row = rows[0]
+                name = (row.get("company_officer_1") or "").strip() or \
+                       (row.get("company_officer_2") or "").strip() or None
+    except Exception:
+        name = None
+    _OFFICER_CACHE[dot] = name
+    return name
+
+
 def check_mc(mc_number, selected_cargo=("general", "fresh", "reefer"), delay=DELAY):
     """Fetch + classify one MC. Returns the record dict with status/note/qualified."""
     rec, _err = fetch_snapshot(mc_number, param="MC_MX", delay=delay)

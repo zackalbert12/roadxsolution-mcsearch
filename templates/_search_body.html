@@ -96,6 +96,7 @@
       {% else %}<p class="next">Skipped — see the reason in the Result row below.</p>{% endif %}
       <p><button class="btn" type="button" onclick="copyAllDetails(this)"
         data-name="{{ rec.legal_name }}" data-dba="{{ rec.dba_name or '' }}"
+        data-owner="{{ rec.owner_officer or '' }}"
         data-mc="{{ rec.mc_number }}" data-dot="{{ rec.usdot_number }}"
         data-phone="{{ rec.phone or '' }}"
         data-address="{{ rec.address_line1 or '' }}{% if rec.city %}, {{ rec.city }}, {{ rec.state }}{% endif %}">Copy all details</button></p>
@@ -103,6 +104,7 @@
       <div class="table-wrap"><table><tbody>
         <tr><th>Legal Name</th><td><b><button class="phone-copy" data-copy="{{ rec.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ rec.legal_name or '—' }}</button></b></td></tr>
         <tr><th>DBA Name</th><td>{{ rec.dba_name or '—' }}</td></tr>
+        {% if rec.owner_officer %}<tr><th>Owner / Officer</th><td><b><button class="phone-copy" data-copy="{{ rec.owner_officer }}" onclick="copyText(this)" title="Tap to copy">{{ rec.owner_officer }}</button></b></td></tr>{% endif %}
         <tr><th>Entity Type</th><td>{{ rec.entity_type or '—' }}</td></tr>
         <tr><th>Authority Status</th><td>{{ rec.authority_status or '—' }}</td></tr>
         <tr><th>MC Number</th><td>{% if rec.mc_number %}<b><button class="phone-copy" data-copy="{{ rec.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ rec.mc_number }}</button></b>{% else %}—{% endif %}</td></tr>
@@ -192,6 +194,7 @@ function copyAllDetails(btn){
   const lines = [];
   const name = g('name'); if (name) lines.push(name);
   const dba = g('dba'); if (dba) lines.push('DBA: ' + dba);
+  const owner = g('owner'); if (owner) lines.push('Owner: ' + owner);
   const mc = g('mc'); if (mc) lines.push('MC: ' + mc);
   const dot = g('dot'); if (dot) lines.push('USDOT: ' + dot);
   const phone = g('phone'); if (phone) lines.push('Phone: ' + phone);

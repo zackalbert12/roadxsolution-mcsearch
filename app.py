@@ -22,7 +22,7 @@ from flask import (
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import db as store
-from safer import check_mc, check_usdot, search_by_name
+from safer import check_mc, check_usdot, search_by_name, fetch_company_officer
 from commodity import COMMODITIES, commodity_names, filter_carriers_by_commodity
 from pickup_lines import PICKUP_LINES, CATEGORIES, lines_for
 
@@ -373,6 +373,9 @@ def _detail_result(rec, param):
     """Wrap a classified SAFER record for the search page."""
     value = rec.get("mc_number") if param == "MC_MX" else (
         rec.get("usdot_number") or rec.get("mc_number"))
+    dot = rec.get("usdot_number") or ""
+    if dot and not rec.get("owner_officer"):
+        rec["owner_officer"] = fetch_company_officer(dot)
     return {"kind": "detail", "rec": rec,
             "safer_url": _safer_url(param, value or "")}
 
