@@ -601,11 +601,13 @@ def carrier_search():
     carriers for phone/email reverse lookup. Bulk mode checks a pasted
     list of MC/DOT numbers (up to 50) in one go."""
     user = current_user()
-    mode = (request.values.get("mode") or "single").strip().lower()
-    if mode not in ("single", "bulk"):
-        mode = "single"
+    mode = (request.values.get("mode") or "auto").strip().lower()
+    if mode not in ("auto", "single", "bulk"):
+        mode = "auto"
     q = (request.values.get("q") or "").strip()
     stype = (request.values.get("type") or "auto").strip().lower()
+    if mode == "auto":
+        stype = "auto"
     if stype not in ("auto", "mc", "usdot", "phone", "email", "name"):
         stype = "auto"
     bulk = (request.values.get("bulk") or "").strip()

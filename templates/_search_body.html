@@ -2,8 +2,9 @@
 <p>Search any carrier by MC, USDOT, phone, email or company name — live FMCSA SAFER data. No login needed.</p></div>
 
 <div style="margin-bottom:12px">
-  <a class="btn {% if mode=='bulk' %}secondary{% endif %}" href="{{ url_for('carrier_search') }}">Single search</a>
-  <a class="btn {% if mode=='bulk' %}{% else %}secondary{% endif %}" href="{{ url_for('carrier_search', mode='bulk') }}">Bulk search</a>
+  <a class="btn {% if mode=='auto' %}{% else %}secondary{% endif %}" href="{{ url_for('carrier_search', mode='auto') }}">Auto Search</a>
+  <a class="btn {% if mode=='single' %}{% else %}secondary{% endif %}" href="{{ url_for('carrier_search', mode='single') }}">Single Search</a>
+  <a class="btn {% if mode=='bulk' %}{% else %}secondary{% endif %}" href="{{ url_for('carrier_search', mode='bulk') }}">Bulk Search</a>
 </div>
 
 {% if mode == 'bulk' %}
@@ -15,6 +16,16 @@
     <div style="margin-top:12px"><button class="btn" type="submit">Check all</button></div>
   </form>
   <p class="muted">Each line is checked live against FMCSA SAFER — MC and DOT numbers both work, and a number that is both shows both records.</p>
+</div>
+{% elif mode == 'auto' %}
+<div class="card">
+  <form method="get" action="{{ url_for('carrier_search') }}" class="form-row">
+    <input type="hidden" name="mode" value="auto">
+    <div style="flex:1;min-width:220px"><label>Type anything — MC, USDOT, phone or company name</label>
+      <input type="text" name="q" value="{{ q }}" placeholder="e.g. 1630009, (740) 703-6745, HOUSER'S HAULING LLC" required></div>
+    <div><label>&nbsp;</label><button class="btn" type="submit">Search</button></div>
+  </form>
+  <p class="muted">Auto-detects what you typed — MC, USDOT, phone number or company name — and runs the right search.</p>
 </div>
 {% else %}
 <div class="card">
