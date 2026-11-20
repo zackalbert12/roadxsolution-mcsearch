@@ -204,3 +204,24 @@ input[type=date], select, textarea { padding: 12px 14px; font-size: 15px; }
   .topbar { padding: 10px 16px; }
   .steps { flex-direction: column; }
 }
+
+/* Active / inactive colours for MC and DOT numbers: green = active, red = inactive */
+.ok-green { color: #16a34a; }
+.bad-red { color: #dc2626; }
+.phone-copy.ok-green { color: #16a34a; }
+.phone-copy.bad-red { color: #dc2626; }
+.phone-copy.copied { color: #16a34a; }
+
+/* Carrier detail sections: grouped with plain headings, roomy rows, big key values */
+.detail-section { border-top: 1px solid var(--border); padding: 16px 2px; }
+.detail-section:first-of-type { border-top: none; padding-top: 4px; }
+.detail-section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--grey-text); margin: 0 0 10px; }
+.detail-row { display: flex; gap: 12px; align-items: baseline; padding: 7px 0; flex-wrap: wrap; }
+.detail-label { flex: 0 0 130px; font-size: 13px; color: var(--grey-text); }
+.detail-value { flex: 1; min-width: 180px; font-size: 15px; color: var(--navy); line-height: 1.5; }
+.detail-value.big { font-size: 18px; font-weight: 700; }
+.detail-value.muted { color: var(--grey-text); font-size: 14px; }
+@media (max-width: 800px) {
+  .detail-label { flex-basis: 100px; }
+}

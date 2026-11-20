@@ -9,7 +9,7 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><b><button class="phone-copy" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b></td>
+      <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b></td>
       <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.legal_name }}</button></b><br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
       <td>{% if r.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td><td>{{ r.power_units }}</td>
       <td>{% for c in r.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}</td>

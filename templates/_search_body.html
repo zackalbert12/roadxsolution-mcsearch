@@ -68,10 +68,12 @@
         <thead><tr><th>Input</th><th>Carrier</th><th>MC / USDOT</th><th>Status</th><th>Authority</th><th>Phone</th><th>Location</th><th>Cargo</th></tr></thead>
         <tbody>
         {% for r in result.rows %}
+          {% set bulk_ok = r.status == 'Qualified' %}
+          {% set bulk_bad = r.status in ('Not Found', 'Error') or 'inactive' in (r.status or '').lower() or 'not authorized' in (r.status or '').lower() %}
           <tr>
             <td>{{ r.input }}</td>
             <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.legal_name or '—' }}</button></b>{% if r.note and not r.legal_name %}<br><span class="muted">{{ r.note }}</span>{% endif %}</td>
-            <td>{% if r.mc_number %}<button class="phone-copy" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button><br>{% endif %}{% if r.usdot_number %}<button class="phone-copy" data-copy="{{ r.usdot_number }}" onclick="copyText(this)" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}{% if not r.mc_number and not r.usdot_number %}—{% endif %}</td>
+            <td>{% if r.mc_number %}<button class="phone-copy {% if bulk_ok %}ok-green{% elif bulk_bad %}bad-red{% endif %}" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button><br>{% endif %}{% if r.usdot_number %}<button class="phone-copy {% if bulk_ok %}ok-green{% elif bulk_bad %}bad-red{% endif %}" data-copy="{{ r.usdot_number }}" onclick="copyText(this)" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}{% if not r.mc_number and not r.usdot_number %}—{% endif %}</td>
             <td>{% if r.status == 'Qualified' %}<span class="pill green">Qualified</span>{% elif r.status == 'Not Found' or r.status == 'Error' %}<span class="pill red">{{ r.status }}</span>{% else %}<span class="pill yellow">{{ r.status }}</span>{% endif %}</td>
             <td>{{ r.authority_status or '—' }}</td>
             <td>{% if r.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td>
@@ -84,6 +86,7 @@
     </div>
   {% elif result.kind == 'detail' %}
     {% set rec = result.rec %}
+    {% set is_active = rec.found and not rec.inactive and not rec.fetch_error and (rec.authority_status or '').upper().startswith('AUTHORIZED FOR') %}
     <div class="card">
       <h2>{{ rec.legal_name or 'Carrier' }}
         {% if rec.status == 'Qualified' %}<span class="pill green">Qualified</span>
@@ -93,7 +96,7 @@
       {% if rec.status == 'Qualified' %}<p class="next">Good to call — this carrier is authorised and hauls cargo that matches.</p>
       {% elif rec.status == 'Not Found' %}<p class="next">No SAFER record for this number — check the number and try again.</p>
       {% elif rec.status == 'Error' %}<p class="next">The check failed — try again in a moment.</p>
-      {% else %}<p class="next">Skipped — see the reason in the Result row below.</p>{% endif %}
+      {% else %}<p class="next">Skipped — see the reason in the Status section below.</p>{% endif %}
       <p><button class="btn" type="button" onclick="copyAllDetails(this)"
         data-name="{{ rec.legal_name }}" data-dba="{{ rec.dba_name or '' }}"
         data-owner="{{ rec.owner_officer or '' }}"
@@ -101,35 +104,50 @@
         data-phone="{{ rec.phone or '' }}"
         data-address="{{ rec.address_line1 or '' }}{% if rec.city %}, {{ rec.city }}, {{ rec.state }}{% endif %}">Copy all details</button></p>
       {% if result.matched %}<p class="muted">Matched name search: <b>{{ result.matched.name }}</b> — {{ result.matched.location }}</p>{% endif %}
-      <div class="table-wrap"><table><tbody>
-        <tr><th>Legal Name</th><td><b><button class="phone-copy" data-copy="{{ rec.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ rec.legal_name or '—' }}</button></b></td></tr>
-        <tr><th>DBA Name</th><td>{{ rec.dba_name or '—' }}</td></tr>
-        {% if rec.owner_officer %}<tr><th>Owner / Officer</th><td><b><button class="phone-copy" data-copy="{{ rec.owner_officer }}" onclick="copyText(this)" title="Tap to copy">{{ rec.owner_officer }}</button></b></td></tr>{% endif %}
-        <tr><th>Entity Type</th><td>{{ rec.entity_type or '—' }}</td></tr>
-        <tr><th>Authority Status</th><td>{{ rec.authority_status or '—' }}</td></tr>
-        <tr><th>MC Number</th><td>{% if rec.mc_number %}<b><button class="phone-copy" data-copy="{{ rec.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ rec.mc_number }}</button></b>{% else %}—{% endif %}</td></tr>
-        <tr><th>USDOT Number</th><td><b><button class="phone-copy" data-copy="{{ rec.usdot_number }}" onclick="copyText(this)" title="Tap to copy">{{ rec.usdot_number or '—' }}</button></b></td></tr>
-        <tr><th>Address</th><td>{{ rec.address_line1 or '' }}{% if rec.city %} {{ rec.city }}, {{ rec.state }}{% endif %}{% if not rec.address_line1 and not rec.city %}—{% endif %}</td></tr>
-        <tr><th>Phone</th><td>{% if rec.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ rec.phone }}')" title="Tap to copy">{{ rec.phone }}</button>{% else %}—{% endif %}</td></tr>
-        <tr><th>Power Units</th><td>{{ rec.power_units or '—' }}</td></tr>
-        <tr><th>Cargo Carried</th><td>{% for c in rec.cargo_carried %}<span class="chip">{{ c }}</span> {% else %}—{% endfor %}</td></tr>
-        <tr><th>Result</th><td><b>{{ rec.status }}</b>{% if rec.note %}<br><span class="muted">{{ rec.note }}</span>{% endif %}</td></tr>
-      </tbody></table></div>
+      <div class="detail-section">
+        <h3>Carrier</h3>
+        <div class="detail-row"><span class="detail-label">Legal name</span><span class="detail-value big"><button class="phone-copy" data-copy="{{ rec.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ rec.legal_name or '—' }}</button></span></div>
+        {% if rec.owner_officer %}<div class="detail-row"><span class="detail-label">Owner / Officer</span><span class="detail-value big"><button class="phone-copy" data-copy="{{ rec.owner_officer }}" onclick="copyText(this)" title="Tap to copy">{{ rec.owner_officer }}</button></span></div>{% endif %}
+        <div class="detail-row"><span class="detail-label">DBA name</span><span class="detail-value muted">{{ rec.dba_name or '—' }}</span></div>
+        <div class="detail-row"><span class="detail-label">Entity type</span><span class="detail-value muted">{{ rec.entity_type or '—' }}</span></div>
+      </div>
+      <div class="detail-section">
+        <h3>Numbers</h3>
+        <div class="detail-row"><span class="detail-label">MC number</span><span class="detail-value big">{% if rec.mc_number %}<button class="phone-copy {% if is_active %}ok-green{% else %}bad-red{% endif %}" data-copy="{{ rec.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ rec.mc_number }}</button>{% else %}—{% endif %}</span></div>
+        <div class="detail-row"><span class="detail-label">USDOT number</span><span class="detail-value big">{% if rec.usdot_number %}<button class="phone-copy {% if is_active %}ok-green{% else %}bad-red{% endif %}" data-copy="{{ rec.usdot_number }}" onclick="copyText(this)" title="Tap to copy">{{ rec.usdot_number }}</button>{% else %}—{% endif %}</span></div>
+        <div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value big">{% if rec.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ rec.phone }}')" title="Tap to copy">{{ rec.phone }}</button>{% else %}—{% endif %}</span></div>
+      </div>
+      <div class="detail-section">
+        <h3>Address</h3>
+        <div class="detail-row"><span class="detail-label">Address</span><span class="detail-value">{{ rec.address_line1 or '' }}{% if rec.city %} {{ rec.city }}, {{ rec.state }}{% endif %}{% if not rec.address_line1 and not rec.city %}—{% endif %}</span></div>
+      </div>
+      <div class="detail-section">
+        <h3>Truck</h3>
+        <div class="detail-row"><span class="detail-label">Power units</span><span class="detail-value big">{{ rec.power_units or '—' }}</span></div>
+        <div class="detail-row"><span class="detail-label">Cargo carried</span><span class="detail-value">{% for c in rec.cargo_carried %}<span class="chip">{{ c }}</span> {% else %}—{% endfor %}</span></div>
+      </div>
+      <div class="detail-section">
+        <h3>Status</h3>
+        <div class="detail-row"><span class="detail-label">Authority</span><span class="detail-value {% if is_active %}ok-green{% else %}bad-red{% endif %}"><b>{{ rec.authority_status or '—' }}</b></span></div>
+        <div class="detail-row"><span class="detail-label">Result</span><span class="detail-value"><b>{{ rec.status }}</b>{% if rec.note %}<br><span class="muted">{{ rec.note }}</span>{% endif %}</span></div>
+      </div>
       <p style="margin-top:12px"><a href="{{ result.safer_url }}" target="_blank" rel="noopener">Verify directly on FMCSA SAFER Web ↗</a></p>
     </div>
   {% elif result.kind == 'ambiguous' %}
     <div class="card">
       <h2>Two carriers share this number</h2>
       <p class="muted">“{{ result.number }}” is both a USDOT number and an MC number. Pick one:</p>
+      {% set mc_active = result.mc.rec.found and not result.mc.rec.inactive and not result.mc.rec.fetch_error and (result.mc.rec.authority_status or '').upper().startswith('AUTHORIZED FOR') %}
+      {% set dot_active = result.dot.rec.found and not result.dot.rec.inactive and not result.dot.rec.fetch_error and (result.dot.rec.authority_status or '').upper().startswith('AUTHORIZED FOR') %}
       <div class="grid cols-2">
         <div class="card">
           <h3>MC-{{ result.number }}</h3>
-          <p><b>{{ result.mc.rec.legal_name or '—' }}</b><br><span class="muted">{{ result.mc.rec.city }}, {{ result.mc.rec.state }} · {{ result.mc.rec.status }}</span></p>
+          <p><b>{{ result.mc.rec.legal_name or '—' }}</b><br><span class="muted">{{ result.mc.rec.city }}, {{ result.mc.rec.state }} · </span><span class="{% if mc_active %}ok-green{% else %}bad-red{% endif %}"><b>{{ result.mc.rec.status }}</b></span></p>
           <a class="btn" href="{{ url_for('carrier_search', q=result.number, type='mc') }}">View MC record</a>
         </div>
         <div class="card">
           <h3>USDOT {{ result.number }}</h3>
-          <p><b>{{ result.dot.rec.legal_name or '—' }}</b><br><span class="muted">{{ result.dot.rec.city }}, {{ result.dot.rec.state }} · {{ result.dot.rec.status }}</span></p>
+          <p><b>{{ result.dot.rec.legal_name or '—' }}</b><br><span class="muted">{{ result.dot.rec.city }}, {{ result.dot.rec.state }} · </span><span class="{% if dot_active %}ok-green{% else %}bad-red{% endif %}"><b>{{ result.dot.rec.status }}</b></span></p>
           <a class="btn" href="{{ url_for('carrier_search', q=result.number, type='usdot') }}">View USDOT record</a>
         </div>
       </div>
@@ -158,7 +176,7 @@
         <tbody>
         {% for r in result.rows %}
           <tr>
-            <td><b><button class="phone-copy" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b><br><span class="muted">{% if r.usdot_number %}<button class="phone-copy" data-copy="{{ r.usdot_number }}" onclick="copyText(this)" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}</span></td>
+            <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b><br><span class="muted">{% if r.usdot_number %}<button class="phone-copy" data-copy="{{ r.usdot_number }}" onclick="copyText(this)" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}</span></td>
             <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.legal_name }}</button></b>{% if r.dba_name %}<br><span class="muted">DBA: {{ r.dba_name }}</span>{% endif %}</td>
             <td>{{ r.city }}, {{ r.state }}</td>
             <td>{% if r.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td>
