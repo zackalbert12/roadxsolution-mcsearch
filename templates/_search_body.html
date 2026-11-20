@@ -4,7 +4,7 @@
 <div class="steps">
   <div class="step"><b class="num">1</b> Type an MC, DOT, phone or company name</div>
   <div class="step"><b class="num">2</b> Press Search</div>
-  <div class="step"><b class="num">3</b> Read the carrier's details — tap the name, MC, DOT or phone number to copy it</div>
+  <div class="step"><b class="num">3</b> Read the carrier's details — tap the name, MC, DOT or phone number to copy it, or press Copy all details to copy everything at once</div>
 </div></div>
 
 <div class="tabrow">
@@ -94,6 +94,11 @@
       {% elif rec.status == 'Not Found' %}<p class="next">No SAFER record for this number — check the number and try again.</p>
       {% elif rec.status == 'Error' %}<p class="next">The check failed — try again in a moment.</p>
       {% else %}<p class="next">Skipped — see the reason in the Result row below.</p>{% endif %}
+      <p><button class="btn" type="button" onclick="copyAllDetails(this)"
+        data-name="{{ rec.legal_name }}" data-dba="{{ rec.dba_name or '' }}"
+        data-mc="{{ rec.mc_number }}" data-dot="{{ rec.usdot_number }}"
+        data-phone="{{ rec.phone or '' }}"
+        data-address="{{ rec.address_line1 or '' }}{% if rec.city %}, {{ rec.city }}, {{ rec.state }}{% endif %}">Copy all details</button></p>
       {% if result.matched %}<p class="muted">Matched name search: <b>{{ result.matched.name }}</b> — {{ result.matched.location }}</p>{% endif %}
       <div class="table-wrap"><table><tbody>
         <tr><th>Legal Name</th><td><b><button class="phone-copy" data-copy="{{ rec.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ rec.legal_name or '—' }}</button></b></td></tr>
@@ -181,6 +186,32 @@ async function copyPhone(btn, phone){
   const old = btn.textContent;
   btn.textContent = 'Copied ✓';
   setTimeout(function(){ btn.textContent = old; btn.classList.remove('copied'); }, 1200);
+}
+function copyAllDetails(btn){
+  const g = function(k){ return (btn.getAttribute('data-' + k) || '').trim(); };
+  const lines = [];
+  const name = g('name'); if (name) lines.push(name);
+  const dba = g('dba'); if (dba) lines.push('DBA: ' + dba);
+  const mc = g('mc'); if (mc) lines.push('MC: ' + mc);
+  const dot = g('dot'); if (dot) lines.push('USDOT: ' + dot);
+  const phone = g('phone'); if (phone) lines.push('Phone: ' + phone);
+  const addr = g('address').replace(/^,\s*/, ''); if (addr) lines.push('Address: ' + addr);
+  const text = lines.join('\n');
+  if (!text) return;
+  const done = function(){
+    const old = btn.textContent;
+    btn.textContent = 'Copied ✓';
+    setTimeout(function(){ btn.textContent = old; }, 1200);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(function(){ fallbackCopy(text); done(); });
+  } else { fallbackCopy(text); done(); }
+}
+function fallbackCopy(text){
+  const t = document.createElement('textarea');
+  t.value = text; document.body.appendChild(t); t.select();
+  try { document.execCommand('copy'); } catch(_){}
+  t.remove();
 }
 function tryExample(v){
   const f = document.querySelector('input[name="q"]');
