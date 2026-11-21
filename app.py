@@ -598,7 +598,20 @@ def _csrf_valid():
 
 @app.context_processor
 def _inject_csrf():
-    return {"csrf_token": _csrf_token}
+    # Saved theme for the pre-paint script in base.html: the Settings
+    # Theme is the source of truth ('light'/'dark'/'system', '' when
+    # logged out — then the browser's own stored toggle wins).
+    saved_theme = ""
+    try:
+        user = current_user()
+        if user:
+            saved_theme = (get_settings(user["id"]).get("theme")
+                           or "Light").lower()
+            if saved_theme not in ("light", "dark", "system"):
+                saved_theme = "light"
+    except Exception:
+        saved_theme = ""
+    return {"csrf_token": _csrf_token, "saved_theme": saved_theme}
 
 
 @app.before_request
@@ -3191,18 +3204,15 @@ def settings_page():
             if section == "appearance":
                 # Audit fix 10: whitelist the allowed values — anything
                 # else falls back to the default instead of being stored.
+                # Layout/Sidebar were removed: no compact/collapsed CSS
+                # exists, so they were dead settings — only Theme is
+                # saved, and base.html applies it on every page load.
                 theme = request.form.get("theme") or "Light"
-                layout = request.form.get("layout") or "Comfortable"
-                sidebar = request.form.get("sidebar") or "Expanded"
                 if theme not in ("Light", "Dark", "System"):
                     theme = "Light"
-                if layout not in ("Comfortable", "Compact"):
-                    layout = "Comfortable"
-                if sidebar not in ("Expanded", "Collapsed"):
-                    sidebar = "Expanded"
                 conn.execute(
-                    "UPDATE settings SET theme=?, layout=?, sidebar=? WHERE user_id=?",
-                    (theme, layout, sidebar, user["id"]))
+                    "UPDATE settings SET theme=? WHERE user_id=?",
+                    (theme, user["id"]))
                 message = "Appearance saved."
             elif section == "notifications":
                 conn.execute(

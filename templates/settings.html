@@ -45,18 +45,6 @@
           <option {% if settings.theme=='System' %}selected{% endif %}>System</option>
         </select>
       </div>
-      <div><label>Layout</label>
-        <select name="layout">
-          <option {% if settings.layout=='Comfortable' %}selected{% endif %}>Comfortable</option>
-          <option {% if settings.layout=='Compact' %}selected{% endif %}>Compact</option>
-        </select>
-      </div>
-      <div><label>Sidebar</label>
-        <select name="sidebar">
-          <option {% if settings.sidebar=='Expanded' %}selected{% endif %}>Expanded</option>
-          <option {% if settings.sidebar=='Collapsed' %}selected{% endif %}>Collapsed</option>
-        </select>
-      </div>
     </div>
     <div style="margin-top:14px"><button class="btn" type="submit">Save Appearance</button></div>
   </form>
