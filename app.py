@@ -124,7 +124,13 @@ app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
 # ProxyFix stays for the scheme (x_proto=1 takes the last
 # X-Forwarded-Proto value, the Render edge's view of the client-facing
 # protocol, https) and as the remote_addr fallback when the Cloudflare
-# headers are absent. Nothing in the app currently depends on
+# headers are absent. ORDER MATTERS: the Cloudflare middleware must be
+# applied FIRST in code (innermost), so it runs AFTER ProxyFix and its
+# CF-Connecting-IP value is the one Flask finally sees — wrapped the
+# other way round, ProxyFix would overwrite REMOTE_ADDR with the last
+# X-Forwarded-For entry (a Render internal IP) and the middleware
+# would silently do nothing on real traffic (caught by the regression
+# test in test_totp_encryption.py).
 # request.is_secure (no _external URLs are generated — password reset is
 # code-based, not link-based), so a wrong scheme would be cosmetic.
 class _CloudflareClientIpMiddleware:
@@ -149,8 +155,8 @@ class _CloudflareClientIpMiddleware:
         return self.app(environ, start_response)
 
 
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 app.wsgi_app = _CloudflareClientIpMiddleware(app.wsgi_app)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 
 store.init_db()
 

@@ -420,6 +420,7 @@ input[type=date], select, textarea { padding: 12px 14px; font-size: 15px; }
 .w-full { width: 100%; }
 .break-all { word-break: break-all; }
 .flex-gap-6 { display: flex; gap: 6px; }
+.overflow-x-auto { overflow-x: auto; }
 .flex-gap-6-center { display: flex; gap: 6px; align-items: center; }
 .flex-gap-8 { display: flex; gap: 8px; }
 /* Narrow inputs (admin set-password, custom-months): element-qualified so
