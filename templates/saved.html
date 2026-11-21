@@ -3,7 +3,8 @@
 {% block content %}
 <div class="hero"><h1>Saved MCs</h1>
 <p>Your shortlist — carriers you starred. Tap a name, MC or phone number to copy it, then call.</p>
-<p class="next">To save a carrier: open Qualified Carriers and tap the ★ star.</p></div>
+<p class="next">To save a carrier: open Qualified Carriers and tap the ★ star.</p>
+{% if rows %}<p><a class="btn secondary" href="{{ url_for('saved', export='csv') }}">Export CSV ({{ rows|length }} carriers)</a></p>{% endif %}</div>
 <div class="card"><div class="table-wrap"><table>
   <thead><tr><th>MC</th><th>Carrier</th><th>Phone</th><th>PU</th><th>Cargo</th><th>Calls</th><th>Actions</th></tr></thead>
   <tbody>
@@ -14,7 +15,8 @@
       <td>{% if r.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td><td>{{ r.power_units }}</td>
       <td>{% for c in r.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}</td>
       <td><span class="calldot {{ r.call_status }}"></span>Calls: {{ r.calls }}</td>
-      <td><button class="star on" onclick="toggleStar({{ r.id }}, this)" title="Unstar">★</button></td>
+      <td><a class="btn secondary" href="{{ url_for('carrier_search', q=r.mc_number, type='mc') }}">View</a>
+      <button class="star on" onclick="toggleStar({{ r.id }}, this)" title="Unstar">★</button></td>
     </tr>
   {% else %}
     <tr><td colspan="7" class="empty">No saved MCs yet.</td></tr>

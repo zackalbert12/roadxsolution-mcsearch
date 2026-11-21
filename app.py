@@ -2974,6 +2974,9 @@ def restarted():
                                               h["authority_status"] or "—")
                                 for h in hist],
                 })
+        if request.args.get("export") == "csv":
+            carriers = [r["carrier"] for r in restarted if r["carrier"]]
+            return _carriers_csv(carriers, "restarted-carriers.csv")
         return render_template("restarted.html", user=user, rows=restarted)
     finally:
         conn.close()
@@ -2988,6 +2991,8 @@ def saved():
         rows = [carrier_dict(r) for r in conn.execute(
             "SELECT * FROM carriers WHERE user_id=? AND starred=1"
             " ORDER BY CAST(mc_number AS INTEGER)", (user["id"],)).fetchall()]
+        if request.args.get("export") == "csv":
+            return _carriers_csv(rows, "saved-carriers.csv")
         return render_template("saved.html", user=user, rows=rows,
                                commodities=commodity_names())
     finally:

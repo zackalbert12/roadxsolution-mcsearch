@@ -4,9 +4,10 @@
 <div class="hero"><h1>Restarted Carriers</h1>
 <p>Carriers that were NOT AUTHORIZED before and are AUTHORIZED now — they came back and can run again.</p>
 <p class="next">Tap a name, MC or phone number to copy it, then call.</p>
+{% if rows %}<p><a class="btn secondary" href="{{ url_for('restarted', export='csv') }}">Export CSV ({{ rows|length }} carriers)</a></p>{% endif %}
 <p class="muted">Detected from this site's own check history. (The original pulls FMCSA AuthHist via Motus; there is no public AuthHist feed, so this copy tracks restarts from its own scans.)</p></div>
 <div class="card"><div class="table-wrap"><table>
-  <thead><tr><th>MC</th><th>Carrier</th><th>State</th><th>Phone</th><th>PU</th><th>Cargo</th><th>History</th></tr></thead>
+  <thead><tr><th>MC</th><th>Carrier</th><th>State</th><th>Phone</th><th>PU</th><th>Cargo</th><th>History</th><th></th></tr></thead>
   <tbody>
   {% for r in rows %}
     <tr>
@@ -17,9 +18,10 @@
       <td>{{ r.carrier.power_units if r.carrier }}</td>
       <td>{% if r.carrier %}{% for c in r.carrier.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}{% endif %}</td>
       <td>{% for h in r.history %}<div class="muted">{{ h }}</div>{% endfor %}</td>
+      <td><a class="btn secondary" href="{{ url_for('carrier_search', q=r.mc_number, type='mc') }}">View</a></td>
     </tr>
   {% else %}
-    <tr><td colspan="7" class="empty">No restarted carriers yet.</td></tr>
+    <tr><td colspan="8" class="empty">No restarted carriers yet.</td></tr>
   {% endfor %}
   </tbody>
 </table></div>
