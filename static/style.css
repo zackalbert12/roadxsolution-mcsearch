@@ -395,3 +395,6 @@ input[type=date], select, textarea { padding: 12px 14px; font-size: 15px; }
 
 /* WhatsApp icon next to the owner phone number */
 .wa-icon { width: 1em; height: 1em; vertical-align: -0.15em; margin-right: 0.2em; flex: none; }
+
+/* Pagination nav under long lists (Qualified, History, Error MCs) */
+.pagination { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 14px 0 4px; }

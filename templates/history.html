@@ -27,6 +27,13 @@
   <a class="btn" href="{{ url_for('dashboard') }}">Go to MC Scanner</a>
 </div>
 {% endif %}
+{% if pages > 1 %}
+<div class="pagination">
+  {% if prev_url %}<a class="btn secondary" href="{{ prev_url }}">← Previous</a>{% endif %}
+  <span class="muted">Page {{ page }} of {{ pages }} — {{ total_scans }} scans, {{ total_runs }} Motus runs</span>
+  {% if next_url %}<a class="btn secondary" href="{{ next_url }}">Next →</a>{% endif %}
+</div>
+{% endif %}
 </div>
 {% if runs %}
 <div class="card"><h2>Motus runs</h2><div class="table-wrap"><table>
