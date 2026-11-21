@@ -586,6 +586,30 @@ SIGNUP_VERIFY_NOT_CONFIGURED_MESSAGE = ("Email verification is not set up "
     "later.")
 
 
+# --- email-code auth kill-switch -------------------------------------------
+# ROAD_EMAIL_AUTH_ENABLED (default "1"): when "0", the email-code
+# features are OFF — OTP login is refused and signup creates the
+# account immediately without a verification code (the behaviour
+# signup had before email verification existed). Forgot-password
+# uses admin-relayed codes (no SMTP) and is untouched. Read per call
+# (like _smtp_config, and the same os.environ.get("ROAD_...", default)
+# pattern as the other flags) so a Render env change takes effect on
+# the next deploy and tests can flip it with os.environ. Any value
+# other than "0" means ON.
+def _email_auth_enabled():
+    """True unless ROAD_EMAIL_AUTH_ENABLED is exactly "0"."""
+    try:
+        return os.environ.get("ROAD_EMAIL_AUTH_ENABLED", "1").strip() != "0"
+    except Exception:
+        return True
+
+
+EMAIL_AUTH_OFF_MESSAGE = (
+    "Email login is turned off for now — sign in with your password.")
+SIGNUP_VERIFY_OFF_MESSAGE = (
+    "Email verification is turned off for now — please sign up again.")
+
+
 def _smtp_config():
     """SMTP settings from the environment, or None when not configured.
     The sender is always CODE_SENDER_EMAIL (see above) — SMTP_FROM is
@@ -797,7 +821,8 @@ def _inject_csrf():
                 saved_theme = "light"
     except Exception:
         saved_theme = ""
-    return {"csrf_token": _csrf_token, "saved_theme": saved_theme}
+    return {"csrf_token": _csrf_token, "saved_theme": saved_theme,
+            "email_auth_enabled": _email_auth_enabled()}
 
 
 @app.before_request
@@ -2117,20 +2142,57 @@ def login():
                     error = BLOCKED_MESSAGE
                 elif conn.execute("SELECT id FROM users WHERE email=? OR username=?",
                                   (email, username)).fetchone():
-                    # Enumeration fix: the reply is the SAME generic
-                    # message as a fresh signup, and no code is sent
-                    # and no pending row is created — an attacker
-                    # cannot tell whether the email/username exists.
-                    return render_template(
-                        "login.html", error="",
-                        message=("If an account does not already exist for "
-                                 "this email, a 6-digit verification code "
-                                 "was emailed to %s. Enter it below to "
-                                 "finish creating your account. It expires "
-                                 "in %d minutes."
-                                 % (email, OTP_EXPIRY_MINUTES)),
-                        signup_verify=True, signup_email=email)
+                    if not _email_auth_enabled():
+                        # Kill-switch OFF: the pre-verification
+                        # behaviour — a plain "already exists" error.
+                        # (The generic reply below only applies while
+                        # codes are being sent.)
+                        error = ("An account with this email or username already exists. "
+                                 "Try logging in instead.")
+                    else:
+                        # Enumeration fix: the reply is the SAME generic
+                        # message as a fresh signup, and no code is sent
+                        # and no pending row is created — an attacker
+                        # cannot tell whether the email/username exists.
+                        return render_template(
+                            "login.html", error="",
+                            message=("If an account does not already exist for "
+                                     "this email, a 6-digit verification code "
+                                     "was emailed to %s. Enter it below to "
+                                     "finish creating your account. It expires "
+                                     "in %d minutes."
+                                     % (email, OTP_EXPIRY_MINUTES)),
+                            signup_verify=True, signup_email=email)
                 else:
+                    if not _email_auth_enabled():
+                        # Kill-switch OFF: no verification step — create
+                        # the account immediately, exactly as signup did
+                        # before email verification existed (7-day Demo
+                        # trial; the guards above already ran). No code
+                        # is generated, no email is sent, no pending row.
+                        # C1: signup NEVER creates an admin (see below).
+                        try:
+                            conn.execute(
+                                "INSERT INTO users (email, username, password_hash, is_admin,"
+                                " plan, created_at, access_expires_at) VALUES (?,?,?,?,?,?,?)",
+                                (email, username, generate_password_hash(password),
+                                 0, "Demo", now_str(), _future_str(DEMO_TRIAL_DAYS)))
+                            conn.commit()
+                        except sqlite3.IntegrityError:
+                            conn.rollback()
+                            error = ("An account with this email or username already exists. "
+                                     "Try logging in instead.")
+                            return render_template("login.html", error=error)
+                        user = conn.execute(
+                            "SELECT * FROM users WHERE email=?", (email,)).fetchone()
+                        conn.execute(
+                            "INSERT INTO login_events (user_id, identifier, success, ip,"
+                            " created_at) VALUES (?,?,?,?,?)",
+                            (user["id"], email, 1, request.remote_addr, now_str()))
+                        conn.commit()
+                        _log_admin_action(None, user["id"], "signup")
+                        _login_user(user, bool(request.form.get("remember")))
+                        return redirect(url_for("dashboard"))
                     # Signup email verification (Zack 2026-11-21): the
                     # account is created ONLY after the user proves
                     # they own the email with a 6-digit code. No user
@@ -2320,6 +2382,8 @@ def login_otp():
     """Email-code sign-in, step 1: ask for the email/username."""
     if current_user():
         return redirect(url_for("dashboard"))
+    if not _email_auth_enabled():
+        return render_template("login.html", error=EMAIL_AUTH_OFF_MESSAGE)
     return render_template("login.html", error="", otp_request=True)
 
 
@@ -2334,6 +2398,9 @@ def login_otp_request():
     login_otp_verify (like the password login)."""
     if current_user():
         return redirect(url_for("dashboard"))
+    if not _email_auth_enabled():
+        # Kill-switch OFF: no code is sent and no code row is written.
+        return render_template("login.html", error=EMAIL_AUTH_OFF_MESSAGE)
     # A half-finished 2FA step from an earlier attempt must not linger.
     session.pop("totp_user_id", None)
     session.pop("totp_remember", None)
@@ -2406,6 +2473,9 @@ def login_otp_verify():
     the unchanged TOTP step."""
     if current_user():
         return redirect(url_for("dashboard"))
+    if not _email_auth_enabled():
+        # Kill-switch OFF: no code is ever accepted while off.
+        return render_template("login.html", error=EMAIL_AUTH_OFF_MESSAGE)
     if _rate_limited(("login", request.remote_addr), 5, 60) or \
             _rate_limited(("login-h", request.remote_addr), 20, 3600):
         error = "Too many login attempts from this address. Try again later."
@@ -2541,6 +2611,10 @@ def signup_verify():
     did before verification existed."""
     if current_user():
         return redirect(url_for("dashboard"))
+    if not _email_auth_enabled():
+        # Kill-switch OFF: no pending signup is ever verified while
+        # off — sign up again and the account is created at once.
+        return render_template("login.html", error=SIGNUP_VERIFY_OFF_MESSAGE)
     if _rate_limited(("login", request.remote_addr), 5, 60) or \
             _rate_limited(("login-h", request.remote_addr), 20, 3600):
         error = "Too many login attempts from this address. Try again later."
@@ -2670,6 +2744,9 @@ def signup_verify_resend():
     request budget as the first code (5 per 15 min)."""
     if current_user():
         return redirect(url_for("dashboard"))
+    if not _email_auth_enabled():
+        # Kill-switch OFF: no fresh code is ever sent while off.
+        return render_template("login.html", error=SIGNUP_VERIFY_OFF_MESSAGE)
     session.pop("totp_user_id", None)
     session.pop("totp_remember", None)
     email = (request.form.get("email") or "").strip().lower()[:254]
