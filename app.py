@@ -2770,17 +2770,18 @@ def _query_carriers(user_id, source, f):
             sql += " AND state=?"
             params.append(f["state"])
         if f["cargo"]:
-            sql += " AND cargo_categories LIKE ?"
-            params.append('%"' + f["cargo"] + '"%')
+            sql += " AND cargo_categories LIKE ? ESCAPE '\\'"
+            params.append('%"' + _like_escape(f["cargo"]) + '"%')
         if f["starred"]:
             sql += " AND starred=1"
         if f.get("scan_id"):
             sql += " AND scan_id=?"
             params.append(f["scan_id"])
         if f["q"]:
-            sql += (" AND (legal_name LIKE ? OR mc_number LIKE ?"
-                    " OR phone LIKE ? OR city LIKE ?)")
-            like = "%" + f["q"] + "%"
+            sql += (" AND (legal_name LIKE ? ESCAPE '\\' OR mc_number LIKE ?"
+                    " ESCAPE '\\' OR phone LIKE ? ESCAPE '\\' OR city LIKE ?"
+                    " ESCAPE '\\')")
+            like = "%" + _like_escape(f["q"]) + "%"
             params += [like, like, like, like]
         order = {"mc": "CAST(mc_number AS INTEGER)",
                  "name": "legal_name", "state": "state, legal_name",
