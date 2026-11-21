@@ -139,6 +139,12 @@ DEMO_SCAN_LIMIT_MESSAGE = ("Demo allows at most 10,000 MC numbers per scan;"
                            " ask the owner for Lifetime for larger scans.")
 
 
+# Timing-oracle guard for login: check_password_hash runs even when no
+# user row exists, against this fixed dummy hash, so an unknown
+# identifier does not answer measurably faster than a known one.
+_DUMMY_PASSWORD_HASH = generate_password_hash(secrets.token_hex(16))
+
+
 def _demo_scan_too_big(user, start_mc, end_mc):
     """True when a Demo user tries to scan more than DEMO_SCAN_LIMIT MCs.
 
@@ -1778,7 +1784,14 @@ def login():
                 user = conn.execute(
                     "SELECT * FROM users WHERE email=? OR username=?",
                     (ident.lower(), ident)).fetchone()
-                ok = bool(user and check_password_hash(user["password_hash"], password))
+                # Timing oracle: always run a hash check, even for an
+                # unknown identifier, so the response time does not
+                # reveal whether the account exists.
+                if user:
+                    ok = check_password_hash(user["password_hash"], password)
+                else:
+                    check_password_hash(_DUMMY_PASSWORD_HASH, password)
+                    ok = False
                 if ok and _is_blocked(user):
                     # Owner block: refused at login, even with the right
                     # password. Checked only after the password checks
