@@ -8,7 +8,7 @@
     {% if demo_expired %}
       <p class="alert">Your 7-day demo has ended. $5/month to continue — contact the owner (WhatsApp {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a>, email zackalbert.dispatch@gmail.com).</p>
     {% else %}
-      <p class="notice">Demo trial: {{ demo_days_left }} day{{ 's' if demo_days_left != 1 else '' }} left — $0 for 1 month trial, full access. When the trial ends your account will be closed — $5/month to continue. Contact the owner: {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a> · zackalbert.dispatch@gmail.com.</p>
+      <p class="notice">Demo trial: {{ demo_days_left }} day{{ 's' if demo_days_left != 1 else '' }} left — $0 7-day trial, full access. When the trial ends your account will be closed — $5/month to continue. Contact the owner: {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a> · zackalbert.dispatch@gmail.com.</p>
     {% endif %}
   {% elif access_end_date and not user.is_admin %}
     {% if demo_expired %}
