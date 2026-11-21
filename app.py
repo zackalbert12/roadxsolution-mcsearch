@@ -91,8 +91,12 @@ def now_time():
 
 # ---------------------------------------------------------------- demo trials
 # A new signup gets a 7-day full trial (plan 'Demo'). Only the admin can
-# give Lifetime access. The trial is derived from plan + created_at — no
-# schema change. Timestamps are naive local time, same as now_str().
+# give Lifetime access. Since the owner-set access durations (Zack
+# 2026-11-21), WHEN access ends lives in users.access_expires_at — one
+# field for every time-limited plan (Demo 7 days, 1 month, 6 months,
+# 1 year, custom N months); NULL = Lifetime, never expires. The timer
+# starts the moment the owner picks the duration. Timestamps are naive
+# local time, same as now_str().
 DEMO_TRIAL_DAYS = 7
 DEMO_EXPIRED_MESSAGE = ("Your 7-day demo has ended. $5/month to continue — "
                         "contact the owner (WhatsApp +92 339 4126983, email "
@@ -104,6 +108,25 @@ DEMO_CLOSED_MESSAGE = ("Your 7-day demo has ended and your account has been "
 DEMO_BLOCKED_MESSAGE = ("Your demo has ended. $5/month to continue — "
                         "contact the owner (WhatsApp +92 339 4126983, email "
                         "zackalbert.dispatch@gmail.com).")
+# Same $5/month billing + owner contact, for a time-limited plan that is
+# not the Demo trial (1 month / 6 months / 1 year / custom): the wording
+# says "your access" instead of "your 7-day demo", because the demo
+# wording would be wrong for those users.
+ACCESS_EXPIRED_MESSAGE = ("Your access has ended. $5/month to continue — "
+                          "contact the owner (WhatsApp +92 339 4126983, "
+                          "email zackalbert.dispatch@gmail.com).")
+ACCESS_CLOSED_MESSAGE = ("Your access has ended and your account has been "
+                         "closed. Contact the owner for $5/month access — "
+                         "WhatsApp +92 339 4126983, email "
+                         "zackalbert.dispatch@gmail.com.")
+# Owner-set access durations (Admin page popup): choice -> days from the
+# moment the owner picks it. A month is 30 days, so custom 1.5 months
+# is 45 days. Custom durations are capped at 120 months in the route.
+ACCESS_DURATIONS = {"demo": 7, "1month": 30, "6months": 180,
+                    "1year": 365}
+ACCESS_PLAN_LABELS = {"demo": "Demo", "1month": "1 month",
+                      "6months": "6 months", "1year": "1 year",
+                      "lifetime": "Lifetime", "custom": "Custom"}
 # Owner block (Zack 2026-11-21): the admin can end any user's access.
 # Separate from the closed-Demo blocklist above — different message,
 # different list, and a blocked user keeps their data and plan.
@@ -126,29 +149,91 @@ def _demo_scan_too_big(user, start_mc, end_mc):
     return end_mc - start_mc + 1 > DEMO_SCAN_LIMIT
 
 
-def _demo_status(user):
-    """(expired, days_left) for a Demo-plan account.
+def _access_expiry(user):
+    """The datetime a user's access ends, or None (never expires).
 
-    Lifetime users and the admin never expire: (False, None). days_left is
-    the whole days remaining in the trial, rounded up, so the last day
-    still reads as 1 day left."""
+    Reads users.access_expires_at — the single source of truth. One
+    safety net for rows written before that column existed: a Demo
+    user with no expiry falls back to created_at + 7 days, which is
+    exactly what the init_db backfill writes, so the fallback can
+    never disagree with the stored field."""
     try:
-        plan = user["plan"]
+        raw = user["access_expires_at"]
+    except (KeyError, TypeError, IndexError):
+        raw = None
+    if raw:
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError):
+            return None
+    try:
+        if user["plan"] == "Demo":
+            created = datetime.strptime(user["created_at"],
+                                        "%Y-%m-%d %H:%M:%S")
+            return created + timedelta(days=DEMO_TRIAL_DAYS)
+    except (KeyError, TypeError, IndexError, ValueError):
+        return None
+    return None
+
+
+def _format_access_end(dt):
+    """'21 Dec 2026' — the human date shown for an access end."""
+    return dt.strftime("%d %b %Y") if dt else None
+
+
+def _future_str(days):
+    """now + N days, as a '%Y-%m-%d %H:%M:%S' timestamp string."""
+    return (datetime.now() + timedelta(days=days)).strftime(
+        "%Y-%m-%d %H:%M:%S")
+
+
+def _demo_status(user):
+    """(expired, days_left) for a time-limited account.
+
+    Lifetime users and the admin never expire: (False, None). The
+    expiry comes from access_expires_at for every plan — Demo (7
+    days), 1 month, 6 months, 1 year, custom. days_left is the whole
+    days remaining, rounded up, so the last day still reads as 1 day
+    left. Kept the old name because every call site (login, scan
+    guards, banners, background threads) already uses it."""
+    try:
         is_admin = user["is_admin"]
-        created = user["created_at"]
+        plan = user["plan"]
     except (KeyError, TypeError, IndexError):
         return (False, None)
-    if is_admin or plan != "Demo":
+    if is_admin or plan == "Lifetime":
         return (False, None)
-    try:
-        created_dt = datetime.strptime(created, "%Y-%m-%d %H:%M:%S")
-    except (TypeError, ValueError):
+    expiry = _access_expiry(user)
+    if expiry is None:
         return (False, None)
-    remaining = created_dt + timedelta(days=DEMO_TRIAL_DAYS) - datetime.now()
+    remaining = expiry - datetime.now()
     if remaining.total_seconds() <= 0:
         return (True, 0)
     days_left = remaining.days + (1 if remaining.seconds else 0)
     return (False, days_left)
+
+
+def _expiry_message(user):
+    """The 'your access ended, $5/month' message for this user's plan:
+    the Demo wording for Demo users, the generic access wording for
+    every other time-limited plan."""
+    try:
+        if user["plan"] == "Demo":
+            return DEMO_EXPIRED_MESSAGE
+    except (KeyError, TypeError, IndexError):
+        pass
+    return ACCESS_EXPIRED_MESSAGE
+
+
+def _expiry_closed_message(user):
+    """The 'account has been closed' message for this user's plan —
+    Demo wording for Demo users, generic access wording otherwise."""
+    try:
+        if user["plan"] == "Demo":
+            return DEMO_CLOSED_MESSAGE
+    except (KeyError, TypeError, IndexError):
+        pass
+    return ACCESS_CLOSED_MESSAGE
 
 
 def _is_blocked(user):
@@ -160,12 +245,14 @@ def _is_blocked(user):
 
 
 def _demo_expired_for(user_id):
-    """Re-read a user from the DB and say whether their demo has expired.
-    Used by background threads, which must stop mid-run when a trial ends."""
+    """Re-read a user from the DB and say whether their access has
+    expired. Used by background threads, which must stop mid-run when
+    access ends."""
     conn = store.connect()
     try:
         row = conn.execute(
-            "SELECT plan, created_at, is_admin FROM users WHERE id=?",
+            "SELECT plan, created_at, access_expires_at, is_admin"
+            " FROM users WHERE id=?",
             (user_id,)).fetchone()
     finally:
         conn.close()
@@ -187,12 +274,14 @@ def _delete_user_data(conn, uid):
 
 
 def _close_expired_demo(user):
-    """Auto-close an expired Demo account: blocklist the email (so it
-    can never sign up again), delete its data and clear the session.
-    Admin and Lifetime users are never closed — _demo_status only
-    reports expired for Demo-plan accounts. Returns True when an
-    account was closed. Self-service delete does NOT blocklist —
-    it calls _delete_user_data directly, never this function."""
+    """Auto-close an account whose access has ended: blocklist the
+    email (so it can never sign up again), delete its data and clear
+    the session. Covers every time-limited plan — Demo, 1 month,
+    6 months, 1 year, custom — because _demo_status reads
+    access_expires_at for all of them. Admin and Lifetime users are
+    never closed. Returns True when an account was closed.
+    Self-service delete does NOT blocklist — it calls
+    _delete_user_data directly, never this function."""
     expired, _ = _demo_status(user)
     if not expired:
         return False
@@ -541,10 +630,11 @@ def _close_expired_demo_accounts():
     expired, _ = _demo_status(dict(user))
     if not expired:
         return None
+    closed_message = _expiry_closed_message(dict(user))
     _close_expired_demo(dict(user))
-    flash(DEMO_CLOSED_MESSAGE)
+    flash(closed_message)
     if request.path.startswith("/api/"):
-        return jsonify({"ok": False, "error": DEMO_CLOSED_MESSAGE}), 403
+        return jsonify({"ok": False, "error": closed_message}), 403
     return redirect(url_for("login"))
 
 
@@ -1576,7 +1666,7 @@ def login():
                     expired, _ = _demo_status(dict(user))
                     if expired:
                         _close_expired_demo(dict(user))
-                        error = DEMO_CLOSED_MESSAGE
+                        error = _expiry_closed_message(dict(user))
                         return render_template("login.html", error=error)
                 if ok and _totp_enabled(user):
                     # Password is right, but 2FA is on for this account:
@@ -1846,7 +1936,8 @@ def login_otp_verify():
     expired, _ = _demo_status(user)
     if expired:
         _close_expired_demo(user)
-        return render_template("login.html", error=DEMO_CLOSED_MESSAGE)
+        return render_template("login.html",
+                               error=_expiry_closed_message(user))
     if _totp_enabled(user):
         if pyotp is None:
             return render_template("login.html",
@@ -1987,9 +2078,10 @@ def signup_verify():
         try:
             conn.execute(
                 "INSERT INTO users (email, username, password_hash, is_admin,"
-                " plan, created_at) VALUES (?,?,?,?,?,?)",
+                " plan, created_at, access_expires_at) VALUES (?,?,?,?,?,?,?)",
                 (pending["email"], pending["username"],
-                 pending["password_hash"], 0, "Demo", now_str()))
+                 pending["password_hash"], 0, "Demo", now_str(),
+                 _future_str(DEMO_TRIAL_DAYS)))
             conn.commit()
         except sqlite3.IntegrityError:
             conn.rollback()
@@ -2217,7 +2309,8 @@ def dashboard():
             commodities=commodity_names(),
             running=user["id"] in RUNNING_SCANS,
             demo_expired=demo_expired,
-            demo_days_left=demo_days_left)
+            demo_days_left=demo_days_left,
+            access_end_date=_format_access_end(_access_expiry(user)))
     finally:
         conn.close()
 
@@ -2284,7 +2377,7 @@ def api_start_scan():
     expired, _ = _demo_status(user)
     if expired:
         return jsonify({"ok": False,
-                        "error": DEMO_EXPIRED_MESSAGE}), 403
+                        "error": _expiry_message(user)}), 403
     # H5: at most 10 scan starts per user per hour.
     if _rate_limited(("scan", user["id"]), 10, 3600):
         return jsonify({"ok": False,
@@ -2363,7 +2456,7 @@ def api_resume_scan():
     expired, _ = _demo_status(user)
     if expired:
         return jsonify({"ok": False,
-                        "error": DEMO_EXPIRED_MESSAGE}), 403
+                        "error": _expiry_message(user)}), 403
     conn = store.connect()
     try:
         scan = conn.execute(
@@ -2619,7 +2712,7 @@ def _motus_page(kind, title):
     if request.method == "POST":
         expired, _ = _demo_status(user)
         if expired:
-            flash(DEMO_EXPIRED_MESSAGE)
+            flash(_expiry_message(user))
             return redirect(request.path)
         # H5: at most 10 Motus runs per user per hour.
         if _rate_limited(("motus", user["id"]), 10, 3600):
@@ -3076,7 +3169,9 @@ def settings_page():
     demo_expired, demo_days_left = _demo_status(dict(user))
     return render_template("settings.html", user=user, settings=settings,
                            message=message, demo_expired=demo_expired,
-                           demo_days_left=demo_days_left)
+                           demo_days_left=demo_days_left,
+                           access_end_date=_format_access_end(
+                               _access_expiry(dict(user))))
 
 
 @app.route("/settings/export")
@@ -3144,7 +3239,8 @@ def admin_page():
     try:
         users = conn.execute(
             "SELECT id, email, username, is_admin, plan, blocked, created_at,"
-            " last_login, login_count FROM users ORDER BY id").fetchall()
+            " access_expires_at, last_login, login_count FROM users"
+            " ORDER BY id").fetchall()
         events = conn.execute(
             "SELECT * FROM login_events ORDER BY id DESC LIMIT 50").fetchall()
         resets = conn.execute(
@@ -3167,7 +3263,13 @@ def admin_page():
             totp_uri = pyotp.TOTP(totp_pending).provisioning_uri(
                 name=user["email"], issuer_name="RoadxSolution")
         return render_template("admin.html", user=user,
-                               users=[dict(r) for r in users],
+                               users=[dict(r, access_ends=(
+                                   "Never" if r["is_admin"]
+                                   or r["plan"] == "Lifetime"
+                                   else (_format_access_end(
+                                       _access_expiry(dict(r)))
+                                       or "—")))
+                                   for r in users],
                                events=[dict(r) for r in events],
                                resets=[dict(r) for r in resets],
                                audit=[dict(r) for r in audit],
@@ -3218,7 +3320,11 @@ def admin_set_plan():
 
     The admin account itself always stays Lifetime. A plan change takes
     effect on the user's next request — plans are read fresh from the
-    database on every request, so no session invalidation is needed."""
+    database on every request, so no session invalidation is needed.
+    The access clock moves with the plan: Demo restarts a fresh 7-day
+    trial from now, Lifetime clears the expiry. (The Admin page popup
+    /admin/set-access is the full duration picker; this route stays for
+    the plain Demo/Lifetime switch.)"""
     admin = current_user()
     uid = request.form.get("user_id")
     plan = (request.form.get("plan") or "").strip()
@@ -3239,13 +3345,85 @@ def admin_set_plan():
         if target["is_admin"]:
             flash("The admin account stays Lifetime.")
             return redirect(url_for("admin_page"))
-        conn.execute("UPDATE users SET plan=? WHERE id=?", (plan, uid_int))
+        expires = (_future_str(DEMO_TRIAL_DAYS) if plan == "Demo"
+                   else None)
+        conn.execute("UPDATE users SET plan=?, access_expires_at=? "
+                     "WHERE id=?", (plan, expires, uid_int))
         conn.commit()
     finally:
         conn.close()
     _log_admin_action(admin["id"], uid_int,
                       "admin_set_plan_%s" % plan.lower())
     flash("Plan updated to %s." % plan)
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/set-access", methods=["POST"])
+@admin_required
+def admin_set_access():
+    """Owner-only access-duration picker (Admin page popup).
+
+    Choices: Demo (7-day trial), 1 month (30 days), 6 months
+    (180 days), 1 year (365 days), Lifetime (never expires), or a
+    custom number of months (decimals allowed — 1.5 months is 45
+    days; a month is 30 days). The timer starts the moment the owner
+    picks: access_expires_at is set to now + the chosen length, and
+    the plan label moves with it. The admin account itself can never
+    be changed — it stays Lifetime. Users never see this control:
+    their Dashboard/Settings only show the read-only end date."""
+    admin = current_user()
+    uid = request.form.get("user_id")
+    duration = (request.form.get("duration") or "").strip()
+    try:
+        uid_int = int(uid) if uid else None
+    except (TypeError, ValueError):
+        uid_int = None
+    if not uid_int or duration not in (
+            "demo", "1month", "6months", "1year", "lifetime", "custom"):
+        flash("Select a user and an access duration.")
+        return redirect(url_for("admin_page"))
+    days = None
+    if duration == "custom":
+        try:
+            months = float((request.form.get("custom_months") or "")
+                           .strip())
+        except (TypeError, ValueError):
+            months = None
+        if months is None or months <= 0 or months > 120:
+            flash("Custom access must be more than 0 and at most "
+                  "120 months.")
+            return redirect(url_for("admin_page"))
+        days = months * 30
+    elif duration in ACCESS_DURATIONS:
+        days = ACCESS_DURATIONS[duration]
+    conn = store.connect()
+    try:
+        target = conn.execute("SELECT id, username, is_admin FROM users"
+                              " WHERE id=?", (uid_int,)).fetchone()
+        if not target:
+            flash("No such user.")
+            return redirect(url_for("admin_page"))
+        if target["is_admin"]:
+            flash("The admin account stays Lifetime.")
+            return redirect(url_for("admin_page"))
+        name = target["username"]
+        label = ACCESS_PLAN_LABELS[duration]
+        if duration == "lifetime":
+            expires = None
+            ends_text = "never expires"
+        else:
+            expires = (datetime.now() + timedelta(days=days)).strftime(
+                "%Y-%m-%d %H:%M:%S")
+            ends_text = "ends %s" % _format_access_end(
+                datetime.strptime(expires, "%Y-%m-%d %H:%M:%S"))
+        conn.execute("UPDATE users SET plan=?, access_expires_at=? "
+                     "WHERE id=?", (label, expires, uid_int))
+        conn.commit()
+    finally:
+        conn.close()
+    _log_admin_action(admin["id"], uid_int,
+                      "admin_set_access_%s" % duration)
+    flash("Access set to %s for %s — %s." % (label, name, ends_text))
     return redirect(url_for("admin_page"))
 
 
@@ -3366,9 +3544,9 @@ def admin_create_user():
         try:
             cur = conn.execute(
                 "INSERT INTO users (email, username, password_hash, is_admin,"
-                " plan, created_at) VALUES (?,?,?,?,?,?)",
+                " plan, created_at, access_expires_at) VALUES (?,?,?,?,?,?,?)",
                 (email, username, generate_password_hash(password), 0, "Demo",
-                 now_str()))
+                 now_str(), _future_str(DEMO_TRIAL_DAYS)))
             conn.commit()
         except sqlite3.IntegrityError:
             conn.rollback()

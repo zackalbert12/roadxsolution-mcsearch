@@ -7,6 +7,7 @@ bug — attach a persistent disk or a hosted database for durable storage.
 """
 import os
 import sqlite3
+from datetime import datetime, timedelta
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -24,7 +25,8 @@ CREATE TABLE IF NOT EXISTS users (
     last_login TEXT,
     login_count INTEGER NOT NULL DEFAULT 0,
     session_version INTEGER NOT NULL DEFAULT 0,
-    blocked INTEGER NOT NULL DEFAULT 0
+    blocked INTEGER NOT NULL DEFAULT 0,
+    access_expires_at TEXT
 );
 CREATE TABLE IF NOT EXISTS admin_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -259,6 +261,27 @@ def init_db():
         if "blocked" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN"
                          " blocked INTEGER NOT NULL DEFAULT 0")
+        # Migration for owner-set access durations (Zack 2026-11-21):
+        # access_expires_at is the single source of truth for when a
+        # user's access ends; NULL = Lifetime / never expires. Old
+        # Demo rows are backfilled to their original trial end
+        # (created_at + 7 days) so the old created_at-based rule and
+        # the new field never disagree.
+        if "access_expires_at" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN"
+                         " access_expires_at TEXT")
+            for row in conn.execute(
+                    "SELECT id, plan, created_at FROM users").fetchall():
+                if row["plan"] == "Demo":
+                    try:
+                        end = (datetime.strptime(
+                            row["created_at"], "%Y-%m-%d %H:%M:%S")
+                            + timedelta(days=7))
+                        conn.execute(
+                            "UPDATE users SET access_expires_at=? WHERE id=?",
+                            (end.strftime("%Y-%m-%d %H:%M:%S"), row["id"]))
+                    except (TypeError, ValueError):
+                        pass
         # Migration for the scan-time Fleet Size filter: the min/max power
         # units the user set on the Dashboard scan form, stored on the scan
         # so a resume reuses the same range. NULL = no limit on that side.

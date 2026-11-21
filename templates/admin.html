@@ -2,7 +2,7 @@
 {% block title %}Admin{% endblock %}
 {% block content %}
 <div class="hero"><h1>Admin — Users &amp; Access</h1>
-<p>Only the site admin sees this page. See everyone who signed up, set a password for someone, create a demo account for one person, change a plan to Lifetime, block or unblock a user's access, and share reset codes.</p></div>
+<p>Only the site admin sees this page. See everyone who signed up, set a password for someone, create a demo account for one person, set how long someone's access lasts with the Access button, block or unblock a user's access, and share reset codes.</p></div>
 
 <div class="card">
   <h2>Two-Factor Authentication</h2>
@@ -57,14 +57,15 @@
 
 <div class="card">
   <h2>Signed-up Users ({{ users|length }})</h2>
-  <p class="muted">To help a user who forgot their password, type a new password in their row and press Set — then tell them the new password. New signups start on a 7-day Demo trial; press Make Lifetime to give someone Lifetime access, or Set Demo to put them back on a trial. Press Block to end someone's access at once — their data and plan stay untouched, and Unblock restores them.</p>
+  <p class="muted">To help a user who forgot their password, type a new password in their row and press Set — then tell them the new password. New signups start on a 7-day Demo trial. Press Access to set how long someone's access lasts — Demo (7 days), 1 month, 6 months, 1 year, Lifetime, or a custom number of months; the timer starts the moment you pick. Press Block to end someone's access at once — their data and plan stay untouched, and Unblock restores them.</p>
   <div class="table-wrap"><table>
-    <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Admin</th><th>Plan</th><th>Signed Up</th><th>Last Login</th><th>Logins</th><th>Set Password</th><th>Change Plan</th><th>Access</th></tr></thead>
+    <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Admin</th><th>Plan</th><th>Access ends</th><th>Signed Up</th><th>Last Login</th><th>Logins</th><th>Set Password</th><th>Access</th><th>Block</th></tr></thead>
     <tbody>
     {% for u in users %}
       <tr>
         <td>{{ u.id }}</td><td><b>{{ u.username }}</b></td><td>{{ u.email }}</td>
         <td>{{ 'Yes' if u.is_admin else 'No' }}</td><td>{{ u.plan }}</td>
+        <td>{{ u.access_ends }}</td>
         <td>{{ u.created_at }}</td><td>{{ u.last_login or '—' }}</td><td>{{ u.login_count }}</td>
         <td>
           <form method="post" action="{{ url_for('admin_set_password') }}" style="display:flex;gap:6px">
@@ -76,17 +77,7 @@
         </td>
         <td>
           {% if not u.is_admin %}
-          <form method="post" action="{{ url_for('admin_set_plan') }}" style="display:flex;gap:6px">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="user_id" value="{{ u.id }}">
-            {% if u.plan == 'Demo' %}
-              <input type="hidden" name="plan" value="Lifetime">
-              <button class="btn small" type="submit">Make Lifetime</button>
-            {% else %}
-              <input type="hidden" name="plan" value="Demo">
-              <button class="btn small" type="submit">Set Demo</button>
-            {% endif %}
-          </form>
+          <button class="btn small" type="button" onclick="openAccessModal({{ u.id }}, {{ u.username|tojson }}, {{ u.plan|tojson }}, {{ u.access_ends|tojson }})">Access</button>
           {% else %}—{% endif %}
         </td>
         <td>
@@ -157,6 +148,44 @@
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="muted">Every password set by an admin, plan change, demo account created, block and unblock, and every password reset with a one-time code, is recorded here.</p>
+  <p class="muted">Every password set by an admin, access duration set, plan change, demo account created, block and unblock, and every password reset with a one-time code, is recorded here.</p>
 </div>
+
+{# Owner-only access-duration popup: the ONLY place a plan or access
+   length can be changed. Users never see this — their own pages show
+   only their read-only end date. #}
+<div class="modal-overlay" id="access-modal">
+  <div class="modal-card">
+    <h2>Set access — <span id="access-username"></span></h2>
+    <p class="muted">Current access: <b id="access-current"></b>. The timer starts the moment you pick — the access ends that many days from now.</p>
+    <form method="post" action="{{ url_for('admin_set_access') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="user_id" id="access-user-id" value="">
+      <label class="duration-choice"><input type="radio" name="duration" value="demo" checked> Demo — 7-day trial</label>
+      <label class="duration-choice"><input type="radio" name="duration" value="1month"> 1 month — 30 days</label>
+      <label class="duration-choice"><input type="radio" name="duration" value="6months"> 6 months — 180 days</label>
+      <label class="duration-choice"><input type="radio" name="duration" value="1year"> 1 year — 365 days</label>
+      <label class="duration-choice"><input type="radio" name="duration" value="custom"> Custom — <input type="number" name="custom_months" step="0.1" min="0.1" max="120" placeholder="months, e.g. 1.5" style="width:130px;padding:6px"> <span class="muted">(1 month = 30 days, so 1.5 months = 45 days)</span></label>
+      <label class="duration-choice"><input type="radio" name="duration" value="lifetime"> Lifetime — never expires</label>
+      <div style="display:flex;gap:8px;margin-top:14px">
+        <button class="btn" type="submit">Set Access</button>
+        <button class="btn" type="button" onclick="closeAccessModal()">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+function openAccessModal(uid, username, plan, ends) {
+  document.getElementById('access-user-id').value = uid;
+  document.getElementById('access-username').textContent = username;
+  document.getElementById('access-current').textContent = plan + ' — ends ' + ends;
+  document.getElementById('access-modal').classList.add('open');
+}
+function closeAccessModal() {
+  document.getElementById('access-modal').classList.remove('open');
+}
+document.getElementById('access-modal').addEventListener('click', function (e) {
+  if (e.target === this) closeAccessModal();
+});
+</script>
 {% endblock %}

@@ -214,6 +214,15 @@ tr:hover td { background: var(--surface-2); }
 .pill.yellow { background: var(--yellow-pale); color: var(--yellow-text); }
 .pill.blue { background: var(--blue-pale); color: var(--blue-text); }
 .pill.orange { background: var(--brand-pale); color: var(--orange-text); }
+/* Access-duration popup (Admin page only, owner-only): a centred modal
+   over a dimmed overlay. The picker lives here and nowhere else — the
+   user's own pages show only their read-only end date. */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(7, 20, 38, 0.6); z-index: 100; align-items: flex-start; justify-content: center; padding: 60px 16px 16px; }
+.modal-overlay.open { display: flex; }
+.modal-card { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; width: 100%; max-width: 440px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35); }
+.modal-card h2 { margin-top: 0; }
+.modal-card .duration-choice { display: block; padding: 8px 4px; border-bottom: 1px solid var(--row-border); cursor: pointer; }
+.modal-card .duration-choice:last-of-type { border-bottom: 0; }
 .chip { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 12px;
   background: var(--surface-2); color: var(--text); margin: 1px 2px 1px 0; }
 .chip.general { background: var(--brand-pale); color: var(--orange-text); }
