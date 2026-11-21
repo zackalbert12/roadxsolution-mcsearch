@@ -3451,6 +3451,11 @@ def export_data():
 @login_required
 def delete_account():
     user = current_user()
+    if user["is_admin"]:
+        # Same style as the block guard: the admin account cannot be
+        # deleted (there would be nobody left to administer the site).
+        flash("Admin accounts cannot be deleted.")
+        return redirect(url_for("settings_page"))
     conn = store.connect()
     try:
         _delete_user_data(conn, user["id"])
