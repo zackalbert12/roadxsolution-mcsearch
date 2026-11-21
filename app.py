@@ -104,6 +104,12 @@ DEMO_CLOSED_MESSAGE = ("Your 7-day demo has ended and your account has been "
 DEMO_BLOCKED_MESSAGE = ("Your demo has ended. $5/month to continue — "
                         "contact the owner (WhatsApp +92 339 4126983, email "
                         "zackalbert.dispatch@gmail.com).")
+# Owner block (Zack 2026-11-21): the admin can end any user's access.
+# Separate from the closed-Demo blocklist above — different message,
+# different list, and a blocked user keeps their data and plan.
+BLOCKED_MESSAGE = ("Your access has been blocked by the owner. Contact "
+                   "the owner (WhatsApp +92 339 4126983, email "
+                   "zackalbert.dispatch@gmail.com).")
 DEMO_SCAN_LIMIT = 10000
 DEMO_SCAN_LIMIT_MESSAGE = ("Demo allows at most 10,000 MC numbers per scan;"
                            " ask the owner for Lifetime for larger scans.")
@@ -143,6 +149,14 @@ def _demo_status(user):
         return (True, 0)
     days_left = remaining.days + (1 if remaining.seconds else 0)
     return (False, days_left)
+
+
+def _is_blocked(user):
+    """True when the owner's block flag is set on this user row."""
+    try:
+        return bool(user["blocked"])
+    except (KeyError, TypeError, IndexError):
+        return False
 
 
 def _demo_expired_for(user_id):
@@ -531,6 +545,30 @@ def _close_expired_demo_accounts():
     flash(DEMO_CLOSED_MESSAGE)
     if request.path.startswith("/api/"):
         return jsonify({"ok": False, "error": DEMO_CLOSED_MESSAGE}), 403
+    return redirect(url_for("login"))
+
+
+@app.before_request
+def _refuse_blocked_users():
+    """Owner block: a blocked user's sessions die the moment the admin
+    blocks them (session_version bump, same mechanism as a password
+    change), but refuse here too so any still-valid session is killed
+    on its next request. Blocked users keep their data and plan —
+    only access is disabled — and unblock restores it."""
+    if request.endpoint in ("login", "login_totp", "login_otp",
+                            "login_otp_request", "login_otp_verify",
+                            "signup_verify", "signup_verify_resend",
+                            "forgot", "reset_password", "static"):
+        return None
+    if not session.get("user_id"):
+        return None
+    user = current_user()
+    if not user or not _is_blocked(user):
+        return None
+    session.clear()
+    flash(BLOCKED_MESSAGE)
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error": BLOCKED_MESSAGE}), 403
     return redirect(url_for("login"))
 
 
@@ -1445,6 +1483,12 @@ def login():
                     # (owner's call) instead of getting a fresh trial.
                     # Admin manual creation bypasses this (separate route).
                     error = DEMO_BLOCKED_MESSAGE
+                elif conn.execute("SELECT id FROM users WHERE email=? AND blocked=1",
+                                  (email,)).fetchone():
+                    # Owner block: a blocked email can never sign up
+                    # again — no code is sent. Separate from the
+                    # closed-Demo blocklist above; the messages differ.
+                    error = BLOCKED_MESSAGE
                 elif conn.execute("SELECT id FROM users WHERE email=? OR username=?",
                                   (email, username)).fetchone():
                     error = "An account with this email or username already exists. Try logging in instead."
@@ -1510,6 +1554,19 @@ def login():
                     "SELECT * FROM users WHERE email=? OR username=?",
                     (ident.lower(), ident)).fetchone()
                 ok = bool(user and check_password_hash(user["password_hash"], password))
+                if ok and _is_blocked(user):
+                    # Owner block: refused at login, even with the right
+                    # password. Checked only after the password checks
+                    # out — like the expired-Demo close below — so a
+                    # wrong password never reveals the block. No
+                    # session is created and nothing is deleted.
+                    conn.execute(
+                        "INSERT INTO login_events (user_id, identifier,"
+                        " success, ip, created_at) VALUES (?,?,?,?,?)",
+                        (user["id"], ident, 0, request.remote_addr, now_str()))
+                    conn.commit()
+                    error = BLOCKED_MESSAGE
+                    return render_template("login.html", error=error)
                 if ok:
                     # Auto-close: a Demo trial that has ended closes the
                     # account on login — but only after the password
@@ -1645,6 +1702,12 @@ def login_otp_request():
         user = conn.execute(
             "SELECT * FROM users WHERE email=? OR username=?",
             (email_key, ident)).fetchone()
+        if user and _is_blocked(user):
+            # Owner block: never send a login code to a blocked user.
+            # The reply stays generic (same as an unknown identifier)
+            # so the block is not revealed to anyone typing the email.
+            return render_template("login.html", error="", message=message,
+                                   otp_verify=True, otp_identifier=ident)
         if not user:
             return render_template("login.html", error="", message=message,
                                    otp_verify=True, otp_identifier=ident)
@@ -1765,6 +1828,21 @@ def login_otp_verify():
         user = dict(user)
     finally:
         conn.close()
+    if _is_blocked(user):
+        # Owner block: a code issued before the block can never be
+        # used after it — and the code is already spent (single-use).
+        # Checked only after the code checks out, so a wrong code
+        # never reveals the block.
+        conn = store.connect()
+        try:
+            conn.execute(
+                "INSERT INTO login_events (user_id, identifier, success,"
+                " ip, created_at) VALUES (?,?,?,?,?)",
+                (user["id"], ident, 0, request.remote_addr, now_str()))
+            conn.commit()
+        finally:
+            conn.close()
+        return render_template("login.html", error=BLOCKED_MESSAGE)
     expired, _ = _demo_status(user)
     if expired:
         _close_expired_demo(user)
@@ -1893,6 +1971,11 @@ def signup_verify():
         if conn.execute("SELECT email FROM closed_demos WHERE email=?",
                         (pending["email"],)).fetchone():
             return render_template("login.html", error=DEMO_BLOCKED_MESSAGE)
+        if conn.execute("SELECT id FROM users WHERE email=? AND blocked=1",
+                        (pending["email"],)).fetchone():
+            # Owner block: the email's account was blocked after the
+            # code was sent — no second account is created.
+            return render_template("login.html", error=BLOCKED_MESSAGE)
         if conn.execute("SELECT id FROM users WHERE email=? OR username=?",
                         (pending["email"], pending["username"])).fetchone():
             return render_template(
@@ -1945,6 +2028,11 @@ def signup_verify_resend():
             signup_verify=True, signup_email=email), 429
     conn = store.connect()
     try:
+        if conn.execute("SELECT id FROM users WHERE email=? AND blocked=1",
+                        (email,)).fetchone():
+            # Owner block: no fresh code for a blocked email.
+            return render_template("login.html", error=BLOCKED_MESSAGE,
+                                   signup_verify=True, signup_email=email)
         row = conn.execute(
             "SELECT * FROM pending_signups WHERE email=? AND used=0"
             " ORDER BY id DESC LIMIT 1", (email,)).fetchone()
@@ -3055,8 +3143,8 @@ def admin_page():
     conn = store.connect()
     try:
         users = conn.execute(
-            "SELECT id, email, username, is_admin, plan, created_at, last_login,"
-            " login_count FROM users ORDER BY id").fetchall()
+            "SELECT id, email, username, is_admin, plan, blocked, created_at,"
+            " last_login, login_count FROM users ORDER BY id").fetchall()
         events = conn.execute(
             "SELECT * FROM login_events ORDER BY id DESC LIMIT 50").fetchall()
         resets = conn.execute(
@@ -3158,6 +3246,87 @@ def admin_set_plan():
     _log_admin_action(admin["id"], uid_int,
                       "admin_set_plan_%s" % plan.lower())
     flash("Plan updated to %s." % plan)
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/block-user", methods=["POST"])
+@admin_required
+def admin_block_user():
+    """Owner block: end a user's access at once. Their data and plan
+    stay untouched — only access is disabled — so unblock restores
+    exactly what they had. All of their sessions die immediately
+    (session_version bump, same mechanism as a password change)."""
+    admin = current_user()
+    uid = request.form.get("user_id")
+    try:
+        uid_int = int(uid) if uid else None
+    except (TypeError, ValueError):
+        uid_int = None
+    if not uid_int:
+        flash("Select a user to block.")
+        return redirect(url_for("admin_page"))
+    conn = store.connect()
+    try:
+        target = conn.execute(
+            "SELECT id, username, is_admin, blocked FROM users WHERE id=?",
+            (uid_int,)).fetchone()
+        if not target:
+            flash("No such user.")
+            return redirect(url_for("admin_page"))
+        if target["is_admin"]:
+            flash("Admin accounts cannot be blocked.")
+            return redirect(url_for("admin_page"))
+        if target["blocked"]:
+            flash("That user is already blocked.")
+            return redirect(url_for("admin_page"))
+        name = target["username"]
+        conn.execute("UPDATE users SET blocked=1 WHERE id=?", (uid_int,))
+        conn.commit()
+    finally:
+        conn.close()
+    _bump_session_version(uid_int)
+    _log_admin_action(admin["id"], uid_int, "admin_block_user")
+    flash("Access blocked for %s." % name)
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/unblock-user", methods=["POST"])
+@admin_required
+def admin_unblock_user():
+    """Restore a blocked user's access fully — their plan and data
+    were never touched, so they come back exactly as they were. Their
+    old sessions stay dead (the block's version bump is not undone),
+    so they sign in fresh."""
+    admin = current_user()
+    uid = request.form.get("user_id")
+    try:
+        uid_int = int(uid) if uid else None
+    except (TypeError, ValueError):
+        uid_int = None
+    if not uid_int:
+        flash("Select a user to unblock.")
+        return redirect(url_for("admin_page"))
+    conn = store.connect()
+    try:
+        target = conn.execute(
+            "SELECT id, username, is_admin, blocked FROM users WHERE id=?",
+            (uid_int,)).fetchone()
+        if not target:
+            flash("No such user.")
+            return redirect(url_for("admin_page"))
+        if target["is_admin"]:
+            flash("Admin accounts cannot be blocked.")
+            return redirect(url_for("admin_page"))
+        if not target["blocked"]:
+            flash("That user is not blocked.")
+            return redirect(url_for("admin_page"))
+        name = target["username"]
+        conn.execute("UPDATE users SET blocked=0 WHERE id=?", (uid_int,))
+        conn.commit()
+    finally:
+        conn.close()
+    _log_admin_action(admin["id"], uid_int, "admin_unblock_user")
+    flash("Access restored for %s." % name)
     return redirect(url_for("admin_page"))
 
 

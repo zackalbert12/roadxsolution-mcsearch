@@ -2,7 +2,7 @@
 {% block title %}Admin{% endblock %}
 {% block content %}
 <div class="hero"><h1>Admin — Users &amp; Access</h1>
-<p>Only the site admin sees this page. See everyone who signed up, set a password for someone, create a demo account for one person, change a plan to Lifetime, and share reset codes.</p></div>
+<p>Only the site admin sees this page. See everyone who signed up, set a password for someone, create a demo account for one person, change a plan to Lifetime, block or unblock a user's access, and share reset codes.</p></div>
 
 <div class="card">
   <h2>Two-Factor Authentication</h2>
@@ -57,9 +57,9 @@
 
 <div class="card">
   <h2>Signed-up Users ({{ users|length }})</h2>
-  <p class="muted">To help a user who forgot their password, type a new password in their row and press Set — then tell them the new password. New signups start on a 7-day Demo trial; press Make Lifetime to give someone Lifetime access, or Set Demo to put them back on a trial.</p>
+  <p class="muted">To help a user who forgot their password, type a new password in their row and press Set — then tell them the new password. New signups start on a 7-day Demo trial; press Make Lifetime to give someone Lifetime access, or Set Demo to put them back on a trial. Press Block to end someone's access at once — their data and plan stay untouched, and Unblock restores them.</p>
   <div class="table-wrap"><table>
-    <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Admin</th><th>Plan</th><th>Signed Up</th><th>Last Login</th><th>Logins</th><th>Set Password</th><th>Change Plan</th></tr></thead>
+    <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Admin</th><th>Plan</th><th>Signed Up</th><th>Last Login</th><th>Logins</th><th>Set Password</th><th>Change Plan</th><th>Access</th></tr></thead>
     <tbody>
     {% for u in users %}
       <tr>
@@ -85,6 +85,20 @@
             {% else %}
               <input type="hidden" name="plan" value="Demo">
               <button class="btn small" type="submit">Set Demo</button>
+            {% endif %}
+          </form>
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if not u.is_admin %}
+          <form method="post" action="{{ url_for('admin_block_user') if not u.blocked else url_for('admin_unblock_user') }}" style="display:flex;gap:6px;align-items:center">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            {% if u.blocked %}
+              <span class="pill red">Blocked</span>
+              <button class="btn small" type="submit">Unblock</button>
+            {% else %}
+              <button class="btn small" type="submit">Block</button>
             {% endif %}
           </form>
           {% else %}—{% endif %}
@@ -143,6 +157,6 @@
     {% endfor %}
     </tbody>
   </table></div>
-  <p class="muted">Every password set by an admin, plan change, demo account created, and every password reset with a one-time code, is recorded here.</p>
+  <p class="muted">Every password set by an admin, plan change, demo account created, block and unblock, and every password reset with a one-time code, is recorded here.</p>
 </div>
 {% endblock %}

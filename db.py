@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL,
     last_login TEXT,
     login_count INTEGER NOT NULL DEFAULT 0,
-    session_version INTEGER NOT NULL DEFAULT 0
+    session_version INTEGER NOT NULL DEFAULT 0,
+    blocked INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS admin_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -252,6 +253,12 @@ def init_db():
         # a code; an unconfirmed secret never reaches the database.
         if "totp_secret" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN totp_secret TEXT")
+        # Migration for the owner block: 1 = the admin ended this
+        # user's access. Blocked users keep their data and plan —
+        # only access is disabled — so unblock restores them fully.
+        if "blocked" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN"
+                         " blocked INTEGER NOT NULL DEFAULT 0")
         # Migration for the scan-time Fleet Size filter: the min/max power
         # units the user set on the Dashboard scan form, stored on the scan
         # so a resume reuses the same range. NULL = no limit on that side.
