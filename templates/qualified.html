@@ -3,7 +3,7 @@
 {% block content %}
 <div class="hero"><h1>{{ title }}</h1>
 <p>These are the good ones — authorised carriers with matching cargo. Ready to call.</p>
-<p class="next">What to do: tap a name, MC, DOT or phone number to copy it, then call. Tap the ★ star to save a carrier to Saved MCs.</p>
+<p class="next">What to do: tap a name, MC, DOT or phone number to copy it, then call. Tap View to see the carrier's full details. Tap the ★ star to save a carrier to Saved MCs.</p>
 <p class="muted">Showing {{ rows|length }} carriers.</p></div>
 
 <div class="card">
@@ -78,6 +78,7 @@
         </select>
       </td>
       <td>
+        <a class="btn secondary" href="{{ url_for('carrier_search', q=r.mc_number, type='mc') }}">View</a>
         <button class="star {% if r.starred %}on{% endif %}" onclick="toggleStar({{ r.id }}, this)" title="Star / save">★</button>
       </td>
     </tr>
