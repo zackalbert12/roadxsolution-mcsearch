@@ -3149,6 +3149,23 @@ def errors_page():
         conn.close()
 
 
+@app.route("/errors/clear", methods=["POST"])
+@login_required
+def clear_errors():
+    """Clear all Error MCs for this user at once."""
+    user = current_user()
+    conn = store.connect()
+    try:
+        cur = conn.execute("DELETE FROM error_mcs WHERE user_id=?",
+                           (user["id"],))
+        conn.commit()
+        flash("Cleared %d error MC%s." % (cur.rowcount,
+                                          "" if cur.rowcount == 1 else "s"))
+    finally:
+        conn.close()
+    return redirect(url_for("errors_page"))
+
+
 @app.route("/errors/<int:eid>/retry", methods=["POST"])
 @login_required
 def retry_error(eid):
@@ -3178,12 +3195,23 @@ def retry_error(eid):
                  rec.get("address_line1") or "", rec.get("city") or "",
                  rec.get("state") or "", rec.get("phone") or "",
                  rec.get("power_units") or "", now_str()))
+            flash("MC-%s is qualified now — moved to Qualified Carriers."
+                  % row["mc_number"])
         elif rec["status"] == "Error":
             conn.execute(
                 "INSERT INTO error_mcs (user_id, scan_id, source, mc_number, error,"
                 " checked_at) VALUES (?,?,?,?,?,?)",
                 (user["id"], row["scan_id"], row["source"], row["mc_number"],
                  rec.get("note") or "Fetch error", now_str()))
+            flash("MC-%s still has an error — kept in Error MCs."
+                  % row["mc_number"])
+        else:
+            # Not Found or a Skip: the retry found no live carrier to
+            # keep, so the row is gone — say so instead of deleting it
+            # silently.
+            flash("MC-%s: %s — removed from Error MCs."
+                  % (row["mc_number"],
+                     rec.get("note") or rec.get("status") or "No SAFER record"))
         conn.commit()
     finally:
         conn.close()
