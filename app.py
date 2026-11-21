@@ -698,6 +698,10 @@ def _security_headers(resp):
         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
         "font-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
         "form-action 'self'")
+    # Static assets: a short max-age (filenames are not hashed, so a
+    # long cache would serve stale CSS/logo after a deploy).
+    if request.path.startswith("/static/"):
+        resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
 
 
