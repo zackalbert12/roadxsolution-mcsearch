@@ -1629,6 +1629,11 @@ def login():
                 password = request.form.get("password") or ""
                 if not email or not username or len(password) < MIN_PASSWORD_LEN:
                     error = "Email, username and a password of %d+ characters are required." % MIN_PASSWORD_LEN
+                elif not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+                    # Server-side format check: an invalid address must
+                    # never reach the code-send step (it would burn a
+                    # code send on an address that cannot receive it).
+                    error = "Enter a valid email address."
                 elif len(password) > 128:
                     error = "Password must be at most 128 characters."
                 elif conn.execute("SELECT email FROM closed_demos WHERE email=?",
