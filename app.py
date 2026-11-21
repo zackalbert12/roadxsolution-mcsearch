@@ -1369,7 +1369,18 @@ def _detail_result(rec, param):
         rec["owner_officer"] = fetch_company_officer(dot)
     # Cargo-based estimate of the carrier's truck types (SAFER records
     # no truck type) — shown in the "Expected Truck" box on the detail.
-    rec["expected_trucks"] = expected_trucks(rec.get("cargo_carried"))
+    # A BROKER, or a carrier with 0 power units, has no trucks to
+    # estimate from: the cargo vote would list up to 10 truck types
+    # and mislead a caller, so show "Not enough info" instead.
+    trucks = expected_trucks(rec.get("cargo_carried"))
+    entity = (rec.get("entity_type") or "").upper()
+    try:
+        pu = int(str(rec.get("power_units") or "").strip())
+    except (TypeError, ValueError):
+        pu = None
+    if "BROKER" in entity or pu == 0:
+        trucks = []
+    rec["expected_trucks"] = trucks
     return {"kind": "detail", "rec": rec,
             "safer_url": _safer_url(param, value or "")}
 
