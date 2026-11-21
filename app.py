@@ -1642,15 +1642,39 @@ def _carriers_csv(carriers, filename):
 
 # ---------------------------------------------------------------- carriers
 
+def _parse_commodities(args):
+    """Repeated ?commodity= params and/or comma-separated values ->
+    list of known commodity names, de-duplicated, order preserved.
+    Unknown names are dropped."""
+    seen = set()
+    out = []
+    for v in args.getlist("commodity"):
+        for x in (v or "").split(","):
+            x = x.strip()
+            if x and x not in seen and x in COMMODITIES:
+                seen.add(x)
+                out.append(x)
+    return out
+
+
 def _carrier_filters(args):
     return {
         "q": (args.get("q") or "").strip(),
         "state": (args.get("state") or "").strip().upper(),
         "cargo": (args.get("cargo") or "").strip().lower(),
-        "commodity": (args.get("commodity") or "").strip(),
+        "commodities": _parse_commodities(args),
         "sort": (args.get("sort") or "mc").strip(),
         "starred": args.get("starred") == "1",
     }
+
+
+def _export_args(args, f):
+    """Query args for the Export CSV link, minus 'export' — keeping all
+    repeated ?commodity= values (request.args.items() keeps only the first)."""
+    out = {k: v for k, v in args.items() if k != "export"}
+    if f["commodities"]:
+        out["commodity"] = f["commodities"]
+    return out
 
 
 def _query_carriers(user_id, source, f):
@@ -1676,8 +1700,8 @@ def _query_carriers(user_id, source, f):
                  "pu": "CAST(power_units AS INTEGER) DESC"}.get(f["sort"], "CAST(mc_number AS INTEGER)")
         sql += " ORDER BY " + order
         rows = [carrier_dict(r) for r in conn.execute(sql, params).fetchall()]
-        if f["commodity"]:
-            rows = filter_carriers_by_commodity(rows, f["commodity"])
+        if f["commodities"]:
+            rows = filter_carriers_by_commodity(rows, f["commodities"])
         states = [r["state"] for r in conn.execute(
             "SELECT DISTINCT state FROM carriers WHERE user_id=? AND source=?"
             " AND state != '' ORDER BY state", (user_id, source)).fetchall()]
@@ -1696,7 +1720,7 @@ def qualified():
         return _carriers_csv(rows, "qualified-carriers.csv")
     # L6: drop a caller-supplied "export" arg before re-passing the query
     # string to url_for (a duplicate keyword would 500).
-    export_args = {k: v for k, v in request.args.items() if k != "export"}
+    export_args = _export_args(request.args, f)
     return render_template("qualified.html", user=user, rows=rows, states=states,
                            f=f, commodities=commodity_names(),
                            title="Qualified Carriers", source="scan",
@@ -1879,7 +1903,7 @@ def motus_qualified():
     rows, states = _query_carriers(user["id"], "motus", f)
     if request.args.get("export") == "csv":
         return _carriers_csv(rows, "motus-qualified.csv")
-    export_args = {k: v for k, v in request.args.items() if k != "export"}
+    export_args = _export_args(request.args, f)
     return render_template("qualified.html", user=user, rows=rows, states=states,
                            f=f, commodities=commodity_names(),
                            title="Motus Qualified", source="motus",
@@ -1894,7 +1918,7 @@ def register_qualified():
     rows, states = _query_carriers(user["id"], "register", f)
     if request.args.get("export") == "csv":
         return _carriers_csv(rows, "register-qualified.csv")
-    export_args = {k: v for k, v in request.args.items() if k != "export"}
+    export_args = _export_args(request.args, f)
     return render_template("qualified.html", user=user, rows=rows, states=states,
                            f=f, commodities=commodity_names(),
                            title="Register Qualified", source="register",

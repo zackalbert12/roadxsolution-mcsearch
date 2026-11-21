@@ -7,7 +7,8 @@
 <p class="muted">Showing {{ rows|length }} carriers.</p></div>
 
 <div class="card">
-  <form method="get" class="form-row">
+  <form method="get" id="qualified-filter">
+  <div class="form-row">
     <div><label>Search — name, MC, phone or city</label><input type="text" name="q" value="{{ f.q }}" placeholder="Name, MC, phone, city"></div>
     <div><label>State — where the carrier is based</label>
       <select name="state"><option value="">All states</option>
@@ -22,12 +23,6 @@
         <option value="reefer" {% if f.cargo=='reefer' %}selected{% endif %}>Refrigerated Food</option>
       </select>
     </div>
-    <div><label>Commodity — what the carrier hauls</label>
-      <select name="commodity">
-        <option value="">All commodities</option>
-        {% for c in commodities %}<option value="{{ c }}" {% if f.commodity==c %}selected{% endif %}>{{ c }}</option>{% endfor %}
-      </select>
-    </div>
     <div><label>Sort by</label>
       <select name="sort">
         <option value="mc" {% if f.sort=='mc' %}selected{% endif %}>MC number</option>
@@ -39,8 +34,25 @@
     <div><label>&nbsp;</label><label class="checkbox"><input type="checkbox" name="starred" value="1" {% if f.starred %}checked{% endif %}> Starred only</label></div>
     <div><label>&nbsp;</label><button class="btn" type="submit">Filter</button></div>
     <div><label>&nbsp;</label><a class="btn secondary" href="{{ export_url }}">Export CSV</a></div>
+  </div>
+  <div class="commodity-filter">
+    <span class="commodity-label">Commodities — pick any (carriers hauling any of them show up)</span>
+    <div class="chip-select">
+      {% for c in commodities %}
+      <label class="chip-check {% if c in f.commodities %}on{% endif %}">
+        <input type="checkbox" name="commodity" value="{{ c }}" {% if c in f.commodities %}checked{% endif %}>
+        <span>{{ c }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    {% if f.commodities %}
+    <p class="selected-line">Selected:
+      {% for c in f.commodities %}<span class="chip">{{ c }}</span>{% endfor %}
+      <button type="button" class="btn small secondary" onclick="clearCommodities()">Clear all</button>
+    </p>
+    {% endif %}
+  </div>
   </form>
-  {% if f.commodity %}<p class="muted" style="margin-top:10px">Commodity filter: <b>{{ f.commodity }}</b> — showing carriers whose trucks haul it.</p>{% endif %}
 </div>
 
 <div class="card"><div class="table-wrap"><table>
@@ -84,6 +96,10 @@
 </div>
 
 <script>
+function clearCommodities(){
+  document.querySelectorAll('#qualified-filter input[name="commodity"]').forEach(function(cb){ cb.checked = false; });
+  document.getElementById('qualified-filter').submit();
+}
 async function copyPhone(btn, phone){
   if(!phone) return;
   try { await navigator.clipboard.writeText(phone); }

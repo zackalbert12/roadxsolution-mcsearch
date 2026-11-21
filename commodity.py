@@ -241,14 +241,22 @@ def carrier_matches_commodity(cargo_carried, commodity):
 def filter_carriers_by_commodity(carriers, commodity):
     """carriers: list of dicts with a 'cargo_carried' key (list or string).
 
-    Returns the carriers whose cargo hauls the commodity.
+    commodity: one commodity name, or a list of names. Returns the
+    carriers whose cargo hauls ANY of the named commodities.
     """
+    if isinstance(commodity, str):
+        wanted = [commodity]
+    else:
+        wanted = list(commodity or [])
+    wanted = [w for w in wanted if w]
+    if not wanted:
+        return list(carriers)
     out = []
     for c in carriers:
         cargo = c.get("cargo_carried") or []
         if isinstance(cargo, str):
             cargo = [x.strip() for x in cargo.split(",") if x.strip()]
-        if carrier_matches_commodity(cargo, commodity):
+        if any(carrier_matches_commodity(cargo, w) for w in wanted):
             out.append(c)
     return out
 

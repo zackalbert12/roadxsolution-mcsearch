@@ -4,7 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="csrf-token" content="{{ csrf_token() }}">
-<title>RoadxSolution-mcsearch — {% block title %}Dashboard{% endblock %}</title>
+<title>RoadxSolutions — {% block title %}Dashboard{% endblock %}</title>
+<script>
+/* Apply the saved theme before first paint so the page never flashes light. */
+(function(){try{var t=localStorage.getItem('roadx-theme');if(t==='dark'||t==='light'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();
+</script>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -48,7 +52,10 @@
 <div class="main">
   <div class="topbar">
     <div><span class="dot"></span><span class="online">DISPATCH SYSTEM ONLINE</span></div>
-    <div class="who"><span class="avatar">{{ user.username[0]|upper }}</span> <b>{{ user.username }}</b> / {% if user.is_admin %}owner{% else %}{{ user.plan }}{% endif %}</div>
+    <div class="topbar-right">
+      <button class="theme-toggle" type="button" onclick="toggleTheme()" title="Switch dark / light theme"><span class="theme-toggle-icon">☾</span> <span class="theme-toggle-label">Dark</span></button>
+      <div class="who"><span class="avatar">{{ user.username[0]|upper }}</span> <b>{{ user.username }}</b> / {% if user.is_admin %}owner{% else %}{{ user.plan }}{% endif %}</div>
+    </div>
   </div>
   <div class="content">
     {% with messages = get_flashed_messages() %}
@@ -56,15 +63,31 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </div>
-  <div class="footer">Trusted by Dispatchers Nationwide &nbsp;·&nbsp; Fast. Reliable. Secure.<br><span class="footer-tag">SMART DISPATCH. STRONGER PROFITS.</span><br>© 2026 All Rights Reserved by RoadxSolution-mcsearch</div>
+  <div class="footer">Trusted by Dispatchers Nationwide &nbsp;·&nbsp; Fast. Reliable. Secure.<br><span class="footer-tag">SMART DISPATCH. STRONGER PROFITS.</span><br>© 2026 All Rights Reserved by RoadxSolutions</div>
 </div>
 {% else %}
+  <button class="theme-toggle theme-toggle-fixed" type="button" onclick="toggleTheme()" title="Switch dark / light theme"><span class="theme-toggle-icon">☾</span> <span class="theme-toggle-label">Dark</span></button>
   {% with messages = get_flashed_messages() %}
     {% if messages %}<div class="auth-wrap" style="margin-bottom:0">{% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}</div>{% endif %}
   {% endwith %}
   {% block auth %}{% endblock %}
 {% endif %}
 <script>
+function currentTheme(){
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('roadx-theme', t); } catch(e){}
+  document.querySelectorAll('.theme-toggle').forEach(function(b){
+    var icon = b.querySelector('.theme-toggle-icon');
+    var label = b.querySelector('.theme-toggle-label');
+    if (icon) icon.textContent = t === 'dark' ? '☀' : '☾';
+    if (label) label.textContent = t === 'dark' ? 'Light' : 'Dark';
+  });
+}
+function toggleTheme(){ applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'); }
+document.addEventListener('DOMContentLoaded', function(){ applyTheme(currentTheme()); });
 function csrfToken(){
   const m = document.querySelector('meta[name="csrf-token"]');
   return m ? m.content : '';

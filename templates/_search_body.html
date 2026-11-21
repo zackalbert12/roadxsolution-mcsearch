@@ -1,10 +1,9 @@
-<div class="hero"><h1>Carrier Search</h1>
-<p>Find any carrier and see its full details — free, no login needed.</p>
-<p class="next">What to do: type something in the box below and press Search.</p>
+<div class="search-hero"><h1>Find a Carrier</h1>
+<p>Search any US carrier by MC, USDOT, phone or company name — live from FMCSA SAFER, free, no login needed.</p>
 <div class="steps">
   <div class="step"><b class="num">1</b> Type an MC, DOT, phone or company name</div>
   <div class="step"><b class="num">2</b> Press Search</div>
-  <div class="step"><b class="num">3</b> Read the carrier's details — tap the name, MC, DOT or phone number to copy it, or press Copy all details to copy everything at once</div>
+  <div class="step"><b class="num">3</b> Tap the name, MC, DOT or phone to copy it — or press Copy all details</div>
 </div></div>
 
 <div class="tabrow">
@@ -13,32 +12,43 @@
 </div>
 
 {% if mode == 'bulk' %}
-<div class="card">
+<div class="card search-panel">
   <form method="post" action="{{ url_for('carrier_search') }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="mode" value="bulk">
     <label>Paste MC or DOT numbers — one per line (up to 50 per search)</label>
-    <textarea name="bulk" rows="8" placeholder="MC 1630009&#10;4218222&#10;DOT 1677211" required>{{ bulk }}</textarea>
+    <textarea name="bulk" rows="8" placeholder="000000&#10;000000&#10;MC-000000" required>{{ bulk }}</textarea>
     <div style="margin-top:12px"><button class="btn" type="submit">Check all</button></div>
   </form>
   <p class="muted">Each line is checked live against FMCSA SAFER — MC and DOT numbers both work, and a number that is both shows both records.</p>
 </div>
 {% else %}
-<div class="card">
-  <form method="get" action="{{ url_for('carrier_search') }}" class="form-row">
+<div class="card search-panel">
+  <form method="get" action="{{ url_for('carrier_search') }}">
     <input type="hidden" name="mode" value="single">
-    <div style="flex:1;min-width:220px"><label>MC, USDOT, phone, email or company name</label>
-      <input type="text" name="q" value="{{ q }}" placeholder="e.g. 1630009, 4218222, HOUSER'S HAULING LLC" required></div>
-    <div><label>Search by</label>
-      <select name="type">
-        <option value="auto" {% if stype=='auto' %}selected{% endif %}>Auto-detect</option>
-        <option value="mc" {% if stype=='mc' %}selected{% endif %}>MC Number</option>
-        <option value="usdot" {% if stype=='usdot' %}selected{% endif %}>USDOT Number</option>
-        <option value="phone" {% if stype=='phone' %}selected{% endif %}>Phone</option>
-        <option value="email" {% if stype=='email' %}selected{% endif %}>Email</option>
-        <option value="name" {% if stype=='name' %}selected{% endif %}>Company Name</option>
-      </select></div>
-    <div><label>&nbsp;</label><button class="btn" type="submit">Search</button></div>
+    <div class="search-bar">
+      <div class="search-field"><label for="q">MC, USDOT, phone, email or company name</label>
+        {% if stype == 'phone' %}{% set ph = '(000) 000-0000' %}
+        {% elif stype == 'email' %}{% set ph = '000000@000000.com' %}
+        {% elif stype in ('mc', 'usdot', 'name') %}{% set ph = '000000' %}
+        {% else %}{% set ph = '000000, (000) 000-0000' %}{% endif %}
+        <input id="q" class="search-input" type="text" name="q" value="{{ q }}" placeholder="{{ ph }}" required></div>
+      <div class="search-field search-field-type"><label for="stype">Search by</label>
+        <select id="stype" class="search-select" name="type">
+          <option value="auto" {% if stype=='auto' %}selected{% endif %}>Auto-detect</option>
+          <option value="mc" {% if stype=='mc' %}selected{% endif %}>MC Number</option>
+          <option value="usdot" {% if stype=='usdot' %}selected{% endif %}>USDOT Number</option>
+          <option value="phone" {% if stype=='phone' %}selected{% endif %}>Phone</option>
+          <option value="email" {% if stype=='email' %}selected{% endif %}>Email</option>
+          <option value="name" {% if stype=='name' %}selected{% endif %}>Company Name</option>
+        </select></div>
+      <div class="search-field search-field-btn"><label>&nbsp;</label><button class="btn search-btn" type="submit">Search</button></div>
+    </div>
+    <div class="example-row"><span class="muted">Try:</span>
+      <a href="{{ url_for('carrier_search', q='1630009', type='mc') }}">MC 1630009</a>
+      <a href="{{ url_for('carrier_search', q='4218222', type='usdot') }}">USDOT 4218222</a>
+      <a href="{{ url_for('carrier_search', q='HOUSER', type='name') }}">HOUSER</a>
+    </div>
   </form>
 </div>
 {% endif %}
@@ -193,6 +203,15 @@
 {% endif %}
 
 <script>
+/* Search placeholder follows the selected search type — every sample is zeros. */
+var SEARCH_PH = {auto: '000000, (000) 000-0000', mc: '000000', usdot: '000000', phone: '(000) 000-0000', email: '000000@000000.com', name: '000000'};
+(function(){
+  var sel = document.getElementById('stype');
+  var inp = document.getElementById('q');
+  if (sel && inp) {
+    sel.addEventListener('change', function(){ inp.placeholder = SEARCH_PH[sel.value] || SEARCH_PH.auto; });
+  }
+})();
 async function copyPhone(btn, phone){
   if(!phone) return;
   try { await navigator.clipboard.writeText(phone); }
