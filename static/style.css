@@ -102,6 +102,7 @@ p { color: var(--grey-text); line-height: 1.5; }
 .sidebar .side-foot { padding: 16px 20px; font-size: 12px; color: #8fa1b8; }
 .sidebar .side-foot b { color: #fff; }
 .sidebar .side-foot a { color: #fff; }
+.sidebar .side-foot button.linklike { background: none; border: none; padding: 0; font: inherit; color: #fff; cursor: pointer; text-decoration: underline; }
 
 .main { margin-left: var(--sidebar-w); min-height: 100vh; display: flex; flex-direction: column; }
 .topbar { background: var(--surface); border-bottom: 3px solid var(--brand);

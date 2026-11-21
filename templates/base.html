@@ -56,7 +56,10 @@
   <div class="side-foot">
     Signed in as <b>{{ user.username }}</b><br>
     {% if user.is_admin %}owner{% else %}{{ user.plan }}{% endif %} plan<br>
-    <a href="{{ url_for('logout') }}">Logout</a>
+    <form method="post" action="{{ url_for('logout') }}" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="linklike">Logout</button>
+    </form>
   </div>
 </aside>
 <div class="main">

@@ -2288,7 +2288,7 @@ def signup_verify_resend():
         signup_verify=True, signup_email=email)
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["POST"])
 def logout():
     # Flask sessions are client-side (signed cookies), so clearing the
     # session alone would leave the old cookie value valid. Bump the
