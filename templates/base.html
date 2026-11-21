@@ -30,6 +30,7 @@
     <div class="nav-group">Tools</div>
     <a href="{{ url_for('notes') }}" class="{% if request.endpoint=='notes' %}active{% endif %}">Notes</a>
     <a href="{{ url_for('pickup_lines') }}" class="{% if request.endpoint=='pickup_lines' %}active{% endif %}">Pickup Lines</a>
+    <a href="{{ url_for('cargo_guide') }}" class="{% if request.endpoint=='cargo_guide' %}active{% endif %}">Cargo Type Guide</a>
     <a href="{{ url_for('history') }}" class="{% if request.endpoint=='history' %}active{% endif %}">Scan History</a>
     <a href="{{ url_for('errors_page') }}" class="{% if request.endpoint=='errors_page' %}active{% endif %}">Error MCs</a>
     <a href="{{ url_for('reports') }}" class="{% if request.endpoint=='reports' %}active{% endif %}">Reports</a>

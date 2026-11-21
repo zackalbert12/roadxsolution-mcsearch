@@ -36,7 +36,8 @@ except ImportError:  # pragma: no cover - missing dependency
 
 import db as store
 from safer import check_mc, check_usdot, search_by_name, fetch_company_officer
-from commodity import COMMODITIES, commodity_names, filter_carriers_by_commodity
+from commodity import (COMMODITIES, EQUIPMENT_COMMODITIES, commodity_names,
+                        filter_carriers_by_commodity)
 from pickup_lines import PICKUP_LINES, CATEGORIES, lines_for
 
 app = Flask(__name__)
@@ -2012,6 +2013,25 @@ def pickup_lines():
         lines = [(c, t) for c, t in lines if q in t.lower()]
     return render_template("pickup_lines.html", user=user, lines=lines,
                            categories=CATEGORIES, category=category, q=q)
+
+
+@app.route("/cargo-guide")
+@login_required
+def cargo_guide():
+    """Cargo Type Guide: pick a truck, see the commodities it hauls.
+
+    Each commodity links to the Qualified page filtered by it, so the
+    guide is actionable. Unknown ?equipment= values fall back to All.
+    """
+    user = current_user()
+    equipment = (request.args.get("equipment") or "").strip()
+    if equipment not in EQUIPMENT_COMMODITIES:
+        equipment = ""
+    guide = {eq: sorted(comms)
+             for eq, comms in EQUIPMENT_COMMODITIES.items()}
+    return render_template("cargo_guide.html", user=user,
+                           equipment_list=sorted(guide.keys()),
+                           guide=guide, equipment=equipment)
 
 
 # ---------------------------------------------------------------- history / errors / reports / settings / about

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Cargo Type Guide{% endblock %}
+{% block content %}
+<div class="hero"><h1>Cargo Type Guide</h1>
+<p>Pick a truck type and see the commodities it hauls — tap a commodity to see the qualified carriers that haul it.</p>
+<p class="next">What to do: choose a truck below, then tap any commodity to open those carriers.</p></div>
+<div class="card">
+  <form method="get" class="form-row">
+    <div style="flex:1;min-width:220px"><label>Truck type</label>
+      <select name="equipment">
+        <option value="" {% if not equipment %}selected{% endif %}>All trucks</option>
+        {% for eq in equipment_list %}
+        <option value="{{ eq }}" {% if equipment==eq %}selected{% endif %}>{{ eq }}</option>
+        {% endfor %}
+      </select></div>
+    <div><label>&nbsp;</label><button class="btn" type="submit">Show commodities</button></div>
+  </form>
+</div>
+{% if equipment %}
+<div class="card">
+  <h2>{{ equipment }} — {{ guide[equipment]|length }} commodities</h2>
+  <p>
+    {% for c in guide[equipment] %}
+    <a class="btn secondary small" href="{{ url_for('qualified', commodity=c) }}" style="margin:2px">{{ c }}</a>
+    {% endfor %}
+  </p>
+</div>
+{% else %}
+{% for eq in equipment_list %}
+<div class="card">
+  <h2>{{ eq }} — {{ guide[eq]|length }} commodities</h2>
+  <p>
+    {% for c in guide[eq] %}
+    <a class="btn secondary small" href="{{ url_for('qualified', commodity=c) }}" style="margin:2px">{{ c }}</a>
+    {% endfor %}
+  </p>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}

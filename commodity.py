@@ -78,7 +78,7 @@ COMMODITIES = {
         "keywords": ["Oilfield Equipment"],
     },
     "Partial Flatbed Loads": {
-        "equipment": ["CDL Hotshot"],
+        "equipment": ["CDL Hotshot", "Flatbed"],
         "keywords": ["Building Materials", "Metal: sheets, coils, rolls"],
     },
     "Parcels": {
