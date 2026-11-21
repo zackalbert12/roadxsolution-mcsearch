@@ -59,7 +59,7 @@
       <h2>Bulk results — {{ result.total }} checked</h2>
       <p><b>{{ result.qualified }} qualified</b> · {{ result.not_found }} not found{% if result.errors %} · <b>{{ result.errors }} errors</b>{% endif %}</p>
       {% if result.capped %}<p class="muted">Only the first {{ result.cap }} lines were checked — paste the rest in a second bulk search.</p>{% endif %}
-      <p><button class="btn secondary" type="button" onclick="downloadBulkCsv()">Download CSV</button></p>
+      <p><button class="btn secondary" type="button" onclick="downloadBulkCsv()">Download CSV</button> <button class="btn secondary" type="button" onclick="downloadBulkJson()">Download JSON</button></p>
       <div class="table-wrap"><table id="bulk-table">
         <thead><tr><th>Input</th><th>Carrier</th><th>MC / USDOT</th><th>Status</th><th>Authority</th><th>Phone</th><th>Location</th><th>Cargo</th></tr></thead>
         <tbody>
@@ -254,20 +254,39 @@ function fallbackCopy(text){
   try { document.execCommand('copy'); } catch(_){}
   t.remove();
 }
-function downloadBulkCsv(){
-  const rows = [['Input','Carrier','MC','USDOT','Status','Authority','Phone','City','State','Cargo']];
+function bulkRows(){
+  /* Same table data as downloadBulkCsv, as objects — shared by CSV + JSON. */
+  const rows = [];
   document.querySelectorAll('#bulk-table tbody tr').forEach(function(tr){
     const cells = [];
     tr.querySelectorAll('td').forEach(function(td){ cells.push(td.innerText.replace(/\n/g,' ').trim()); });
     const mc = (cells[2].match(/MC-(\d+)/)||[])[1] || '';
     const dot = (cells[2].match(/USDOT (\d+)/)||[])[1] || '';
     const loc = cells[6].split(',');
-    rows.push([cells[0], cells[1], mc, dot, cells[3], cells[4], cells[5], (loc[0]||'').trim(), (loc[1]||'').trim(), cells[7]]);
+    rows.push({input: cells[0], carrier: cells[1], mc: mc, usdot: dot,
+               status: cells[3], authority: cells[4], phone: cells[5],
+               city: (loc[0]||'').trim(), state: (loc[1]||'').trim(),
+               cargo: cells[7]});
+  });
+  return rows;
+}
+function downloadBulkCsv(){
+  const rows = [['Input','Carrier','MC','USDOT','Status','Authority','Phone','City','State','Cargo']];
+  bulkRows().forEach(function(o){
+    rows.push([o.input, o.carrier, o.mc, o.usdot, o.status, o.authority,
+               o.phone, o.city, o.state, o.cargo]);
   });
   const csv = rows.map(function(r){ return r.map(function(v){ return '"' + String(v).replace(/"/g,'""') + '"'; }).join(','); }).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
   a.download = 'bulk-carrier-search.csv';
+  a.click();
+}
+function downloadBulkJson(){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(
+    [JSON.stringify(bulkRows(), null, 2)], {type:'application/json'}));
+  a.download = 'bulk-carrier-search.json';
   a.click();
 }
 </script>
