@@ -1273,6 +1273,12 @@ def _digits(s):
     return re.sub(r"\D", "", s or "")
 
 
+def _like_escape(s):
+    """Escape LIKE wildcards so a search for %, _ or \ matches those
+    literal characters instead of acting as a wildcard."""
+    return (s or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _safer_url(param, value):
     """Link to verify one record directly on the FMCSA SAFER website."""
     return ("https://safer.fmcsa.dot.gov/query.asp?searchtype=ANY"
@@ -1294,15 +1300,17 @@ def _detail_result(rec, param):
             "safer_url": _safer_url(param, value or "")}
 
 
-def _local_carriers_by_phone(digits):
-    """Saved carriers whose phone contains these digits (any format)."""
-    if len(digits) < 7:
+def _local_carriers_by_phone(digits, user_id=None):
+    """Saved carriers of THIS user whose phone contains these digits
+    (any format). Anonymous visitors get nothing — saved carriers
+    belong to the user who checked them, never to the public."""
+    if len(digits) < 7 or not user_id:
         return []
     conn = store.connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM carriers WHERE phone IS NOT NULL AND phone != ''"
-            " ORDER BY checked_at DESC LIMIT 500").fetchall()
+            "SELECT * FROM carriers WHERE user_id=? AND phone IS NOT NULL AND phone != ''"
+            " ORDER BY checked_at DESC LIMIT 500", (user_id,)).fetchall()
     finally:
         conn.close()
     out, seen = [], set()
@@ -1314,14 +1322,19 @@ def _local_carriers_by_phone(digits):
     return out
 
 
-def _local_carriers_by_name(q):
-    """Saved carriers whose legal or DBA name contains q."""
+def _local_carriers_by_name(q, user_id=None):
+    """Saved carriers of THIS user whose legal or DBA name contains q.
+    Anonymous visitors get nothing (see _local_carriers_by_phone)."""
+    if not user_id:
+        return []
     conn = store.connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM carriers WHERE legal_name LIKE ? OR dba_name LIKE ?"
+            "SELECT * FROM carriers WHERE user_id=? AND"
+            " (legal_name LIKE ? ESCAPE '\\' OR dba_name LIKE ? ESCAPE '\\')"
             " ORDER BY checked_at DESC LIMIT 50",
-            ("%" + q + "%", "%" + q + "%")).fetchall()
+            (user_id, "%" + _like_escape(q) + "%",
+             "%" + _like_escape(q) + "%")).fetchall()
     finally:
         conn.close()
     out, seen = [], set()
@@ -1333,13 +1346,14 @@ def _local_carriers_by_name(q):
     return out
 
 
-def _name_search(q):
-    """Company-name search: live SAFER keyword matches first, saved
-    carriers as a fallback when SAFER finds nobody (or is unreachable)."""
+def _name_search(q, user_id=None):
+    """Company-name search: live SAFER keyword matches first, the
+    user's OWN saved carriers as a fallback when SAFER finds nobody
+    (or is unreachable). Anonymous visitors never see saved carriers."""
     matches, err = search_by_name(q, direct_first=True)
     if err:
         app.logger.exception("SAFER name search failed for %r", q)
-        rows = _local_carriers_by_name(q)
+        rows = _local_carriers_by_name(q, user_id)
         if rows:
             return {"kind": "local_matches", "rows": rows,
                     "heading": "Saved carriers matching this name",
@@ -1347,7 +1361,7 @@ def _name_search(q):
         return {"kind": "message",
                 "text": "SAFER name search is unavailable right now. Try an MC or USDOT number instead."}
     if not matches:
-        rows = _local_carriers_by_name(q)
+        rows = _local_carriers_by_name(q, user_id)
         if rows:
             return {"kind": "local_matches", "rows": rows,
                     "heading": "No live SAFER match — saved carriers matching this name"}
@@ -1363,9 +1377,11 @@ def _name_search(q):
             "total": len(matches)}
 
 
-def _run_carrier_search(q, stype):
+def _run_carrier_search(q, stype, user_id=None):
     """Run a public carrier search. Result kinds: detail | ambiguous |
-    name_matches | local_matches | message."""
+    name_matches | local_matches | message. Live SAFER lookups are
+    public; saved-carrier fallbacks are scoped to the logged-in user
+    (user_id=None -> no saved carriers at all)."""
     if stype == "mc":
         return _detail_result(check_mc(q, ("general", "fresh", "reefer"),
                                        direct_first=True), "MC_MX")
@@ -1376,10 +1392,13 @@ def _run_carrier_search(q, stype):
         digits = _digits(q)
         if len(digits) == 11 and digits.startswith("1"):
             digits = digits[1:]
-        rows = _local_carriers_by_phone(digits)
+        rows = _local_carriers_by_phone(digits, user_id)
         if rows:
             return {"kind": "local_matches", "rows": rows,
                     "heading": "Saved carriers with this phone number"}
+        if not user_id:
+            return {"kind": "message",
+                    "text": "Phone search looks through saved carriers — sign in to search yours, or search by MC or USDOT for a live SAFER check."}
         return {"kind": "message",
                 "text": "No carrier with this phone number in our checked carriers yet \u2014 search by MC or USDOT for a live SAFER check."}
     if stype == "email":
@@ -1388,10 +1407,10 @@ def _run_carrier_search(q, stype):
         return {"kind": "message",
                 "text": "We don't store carrier email addresses, so there's nothing to match an email against \u2014 search by MC, USDOT or company name instead."}
     if stype == "name":
-        return _name_search(q)
+        return _name_search(q, user_id)
     # auto-detect
     if "@" in q:
-        return _run_carrier_search(q, "email")
+        return _run_carrier_search(q, "email", user_id)
     stripped = q.strip()
     digits = _digits(q)
     if stripped.isdigit() and len(stripped) <= 8:
@@ -1423,10 +1442,10 @@ def _run_carrier_search(q, stype):
             return _detail_result(mc, "MC_MX")
         return _detail_result(dot, "USDOT")
     if digits and (len(digits) == 10 or (len(digits) == 11 and digits.startswith("1"))):
-        return _run_carrier_search(q, "phone")
+        return _run_carrier_search(q, "phone", user_id)
     if stripped.isdigit():
-        return _run_carrier_search(stripped, "mc")
-    return _name_search(q)
+        return _run_carrier_search(stripped, "mc", user_id)
+    return _name_search(q, user_id)
 
 
 BULK_MAX_LINES = 50
@@ -1520,9 +1539,10 @@ def _run_bulk_search(raw):
 @app.route("/search", methods=["GET", "POST"])
 def carrier_search():
     """Public carrier search — no login needed. MC, USDOT, phone, email
-    or company name; live SAFER data for numbers and names, saved
-    carriers for phone/email reverse lookup. Bulk mode checks a pasted
-    list of MC/DOT numbers (up to 50) in one go."""
+    or company name; live SAFER data for numbers and names, the
+    logged-in user's OWN saved carriers for phone/name reverse lookup
+    (anonymous visitors never see saved carriers). Bulk mode checks a
+    pasted list of MC/DOT numbers (up to 50) in one go."""
     user = current_user()
     # Single Search is the only single-search mode (its type dropdown
     # defaults to Auto-detect, so a separate Auto mode is redundant).
@@ -1566,7 +1586,8 @@ def carrier_search():
             return render_template("search.html", user=user, q=q, stype=stype,
                                    result=result, mode=mode, bulk=bulk), 429
         try:
-            result = _run_carrier_search(q, stype)
+            result = _run_carrier_search(q, stype,
+                                         user["id"] if user else None)
         except Exception:
             app.logger.exception("Carrier search failed for %r", q)
             result = {"kind": "message",
