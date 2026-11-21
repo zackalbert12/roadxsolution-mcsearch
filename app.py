@@ -92,8 +92,13 @@ def now_time():
 # give Lifetime access. The trial is derived from plan + created_at — no
 # schema change. Timestamps are naive local time, same as now_str().
 DEMO_TRIAL_DAYS = 7
-DEMO_EXPIRED_MESSAGE = ("Your 7-day demo trial has ended. Ask the site "
-                        "admin for Lifetime access.")
+DEMO_EXPIRED_MESSAGE = ("Your 7-day demo has ended. $1/month to continue — "
+                        "contact the owner (WhatsApp +92 339 4126983, email "
+                        "zackalbert.dispatch@gmail.com).")
+DEMO_CLOSED_MESSAGE = ("Your 7-day demo has ended and your account has been "
+                       "closed. Contact the owner for $1/month access — "
+                       "WhatsApp +92 339 4126983, email "
+                       "zackalbert.dispatch@gmail.com.")
 DEMO_SCAN_LIMIT = 10000
 DEMO_SCAN_LIMIT_MESSAGE = ("Demo allows at most 10,000 MC numbers per scan;"
                            " ask the owner for Lifetime for larger scans.")
@@ -149,6 +154,35 @@ def _demo_expired_for(user_id):
         return True
     expired, _ = _demo_status(dict(row))
     return expired
+
+
+def _delete_user_data(conn, uid):
+    """Delete one user's rows from every user-owned table, including
+    the users row itself. Shared by self-service delete-account and
+    the demo auto-close, so both wipe exactly the same tables."""
+    for table in ("carriers", "scans", "scan_log", "check_history",
+                  "error_mcs", "notes", "motus_runs", "login_events",
+                  "password_resets", "settings"):
+        conn.execute("DELETE FROM %s WHERE user_id=?" % table, (uid,))
+    conn.execute("DELETE FROM users WHERE id=?", (uid,))
+
+
+def _close_expired_demo(user):
+    """Auto-close an expired Demo account: delete its data and clear
+    the session. Admin and Lifetime users are never closed —
+    _demo_status only reports expired for Demo-plan accounts.
+    Returns True when an account was closed."""
+    expired, _ = _demo_status(user)
+    if not expired:
+        return False
+    conn = store.connect()
+    try:
+        _delete_user_data(conn, user["id"])
+        conn.commit()
+    finally:
+        conn.close()
+    session.clear()
+    return True
 
 
 # ---------------------------------------------------------------- security
@@ -307,6 +341,32 @@ def _csrf_check():
             return jsonify({"ok": False,
                             "error": "Session expired — reload the page and try again."}), 403
         abort(403)
+
+
+@app.before_request
+def _close_expired_demo_accounts():
+    """Auto-close: as soon as a Demo trial ends, the account is deleted.
+    Runs on every authenticated request, so a trial ending mid-session
+    closes the account on the next request. Admin and Lifetime users
+    are never touched. Auth pages are excluded — the login route closes
+    an expired account itself, but only after the password checks out
+    (a wrong-password attempt must not delete anything)."""
+    if request.endpoint in ("login", "login_totp", "forgot",
+                            "reset_password", "static"):
+        return None
+    if not session.get("user_id"):
+        return None
+    user = current_user()
+    if not user:
+        return None
+    expired, _ = _demo_status(dict(user))
+    if not expired:
+        return None
+    _close_expired_demo(dict(user))
+    flash(DEMO_CLOSED_MESSAGE)
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error": DEMO_CLOSED_MESSAGE}), 403
+    return redirect(url_for("login"))
 
 
 @app.after_request
@@ -1250,6 +1310,17 @@ def login():
                     "SELECT * FROM users WHERE email=? OR username=?",
                     (ident.lower(), ident)).fetchone()
                 ok = bool(user and check_password_hash(user["password_hash"], password))
+                if ok:
+                    # Auto-close: a Demo trial that has ended closes the
+                    # account on login — but only after the password
+                    # checks out, so a wrong-password attempt deletes
+                    # nothing. 2FA never applies here (only the admin
+                    # can enable 2FA, and the admin never expires).
+                    expired, _ = _demo_status(dict(user))
+                    if expired:
+                        _close_expired_demo(dict(user))
+                        error = DEMO_CLOSED_MESSAGE
+                        return render_template("login.html", error=error)
                 if ok and _totp_enabled(user):
                     # Password is right, but 2FA is on for this account:
                     # hold the login at the second step. No login event
@@ -2327,8 +2398,10 @@ def settings_page():
             _bump_session_version(user["id"])
             session["sv"] = user["session_version"] + 1
         settings = get_settings(user["id"])
+    demo_expired, demo_days_left = _demo_status(dict(user))
     return render_template("settings.html", user=user, settings=settings,
-                           message=message)
+                           message=message, demo_expired=demo_expired,
+                           demo_days_left=demo_days_left)
 
 
 @app.route("/settings/export")
@@ -2355,12 +2428,7 @@ def delete_account():
     user = current_user()
     conn = store.connect()
     try:
-        uid = user["id"]
-        for table in ("carriers", "scans", "scan_log", "check_history",
-                      "error_mcs", "notes", "motus_runs", "login_events",
-                      "password_resets", "settings"):
-            conn.execute("DELETE FROM %s WHERE user_id=?" % table, (uid,))
-        conn.execute("DELETE FROM users WHERE id=?", (uid,))
+        _delete_user_data(conn, user["id"])
         conn.commit()
     finally:
         conn.close()
