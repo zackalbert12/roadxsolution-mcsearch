@@ -8,7 +8,7 @@
 <div class="card">
   <h2>Account</h2>
   <p class="muted">Who you are — and change your password here.</p>
-  <p><b>Username:</b> {{ user.username }}<br><b>Email:</b> {{ user.email }}<br><b>Plan:</b> {{ user.plan }} — $0</p>
+  <p><b>Username:</b> {{ user.username }}<br><b>Email:</b> {{ user.email }}<br><b>Plan:</b> {% if user.is_admin %}owner{% else %}{{ user.plan }}{% endif %} — $0</p>
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="section" value="password">

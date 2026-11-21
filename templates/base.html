@@ -41,14 +41,14 @@
   </nav>
   <div class="side-foot">
     Signed in as <b>{{ user.username }}</b><br>
-    {{ user.plan }} plan<br>
+    {% if user.is_admin %}owner{% else %}{{ user.plan }}{% endif %} plan<br>
     <a href="{{ url_for('logout') }}">Logout</a>
   </div>
 </aside>
 <div class="main">
   <div class="topbar">
     <div><span class="dot"></span><span class="online">DISPATCH SYSTEM ONLINE</span></div>
-    <div class="who"><span class="avatar">{{ user.username[0]|upper }}</span> <b>{{ user.username }}</b> / {{ user.plan }}</div>
+    <div class="who"><span class="avatar">{{ user.username[0]|upper }}</span> <b>{{ user.username }}</b> / {% if user.is_admin %}owner{% else %}{{ user.plan }}{% endif %}</div>
   </div>
   <div class="content">
     {% with messages = get_flashed_messages() %}
