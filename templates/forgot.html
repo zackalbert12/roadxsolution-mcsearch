@@ -8,6 +8,7 @@
     {% if message %}<div class="notice">{{ message }}</div>{% endif %}
     {% if error %}<div class="alert">{{ error }}</div>{% endif %}
     <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Email</label>
       <input type="email" name="email" placeholder="you@example.com" required>
       <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Request Reset Code</button></div>

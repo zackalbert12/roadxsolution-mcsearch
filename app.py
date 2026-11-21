@@ -4,13 +4,17 @@ A dispatcher MC-verification workspace: scan FMCSA MC ranges live against
 SAFER, keep qualified carriers, Motus USDOT checks, notes, pickup lines,
 reports and admin user management. Deployable on Render's free tier.
 """
+import collections
 import concurrent.futures
 import csv
+import hashlib
+import hmac
 import io
 import json
 import os
 import re
 import secrets
+import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta
@@ -19,6 +23,7 @@ from flask import (
     Flask, request, session, redirect, url_for, render_template,
     jsonify, Response, abort, flash,
 )
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
 
 import db as store
@@ -27,9 +32,27 @@ from commodity import COMMODITIES, commodity_names, filter_carriers_by_commodity
 from pickup_lines import PICKUP_LINES, CATEGORIES, lines_for
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY") or "dev-secret-change-me"
+# H4: no hardcoded fallback key. If SECRET_KEY is unset, generate a random
+# key for this process only (sessions will not survive a restart) and warn
+# loudly — a published constant would let anyone forge any session.
+_secret = os.environ.get("SECRET_KEY")
+if not _secret:
+    _secret = secrets.token_hex(32)
+    print("WARNING: SECRET_KEY is not set — generated a random key for this"
+          " process only. Set SECRET_KEY in production.", flush=True)
+app.secret_key = _secret
 app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# Secure by default (Render serves HTTPS). Set SESSION_COOKIE_SECURE=0 only
+# for plain-HTTP local testing.
+app.config["SESSION_COOKIE_SECURE"] = \
+    os.environ.get("SESSION_COOKIE_SECURE", "1") == "1"
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
+# M7: reject oversized request bodies outright.
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+# M8: Render terminates TLS at its proxy — trust X-Forwarded-For/Proto so
+# request.remote_addr and request.is_secure are the real client.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 
 store.init_db()
 
@@ -43,15 +66,185 @@ def now_time():
     return datetime.now().strftime("%H:%M:%S")
 
 
+# ---------------------------------------------------------------- security
+
+MIN_PASSWORD_LEN = 8
+
+# --- in-memory rate limiter (per process; with 2 gunicorn workers an
+# attacker gets 2x the allowance — acceptable for this app, and the
+# limits below are generous for real use) -------------------------------
+_RATE_LIMITS = {}   # key -> deque of timestamps (seconds)
+_RATE_LOCK = threading.Lock()
+_RESET_FAILURES = {}   # email -> failed reset-code attempts
+
+
+def _rate_limited(key, limit, window):
+    """True when `key` has already used `limit` calls in the last
+    `window` seconds; otherwise records this call and returns False."""
+    now = time.time()
+    with _RATE_LOCK:
+        if len(_RATE_LIMITS) > 5000:
+            for k in [k for k, dq in _RATE_LIMITS.items()
+                      if not dq or dq[0] <= now - 3600]:
+                del _RATE_LIMITS[k]
+        dq = _RATE_LIMITS.setdefault(key, collections.deque())
+        while dq and dq[0] <= now - window:
+            dq.popleft()
+        if len(dq) >= limit:
+            return True
+        dq.append(now)
+        return False
+
+
+# --- CSRF (M1): one token per session, sent as a hidden form field or an
+# X-CSRF-Token header on fetch calls --------------------------------------
+def _csrf_token():
+    tok = session.get("_csrf")
+    if not tok:
+        tok = secrets.token_urlsafe(32)
+        session["_csrf"] = tok
+    return tok
+
+
+def _csrf_valid():
+    tok = session.get("_csrf")
+    if not tok:
+        return False
+    sent = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
+    if not sent:
+        data = request.get_json(silent=True)
+        if isinstance(data, dict):
+            sent = data.get("csrf_token")
+    return bool(sent) and hmac.compare_digest(str(sent), str(tok))
+
+
+@app.context_processor
+def _inject_csrf():
+    return {"csrf_token": _csrf_token}
+
+
+@app.before_request
+def _csrf_check():
+    if request.method == "POST" and not _csrf_valid():
+        if request.path.startswith("/api/"):
+            return jsonify({"ok": False,
+                            "error": "Session expired — reload the page and try again."}), 403
+        abort(403)
+
+
+@app.after_request
+def _security_headers(resp):
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "font-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
+        "form-action 'self'")
+    return resp
+
+
+# --- admin seeding (C1): the admin comes from env vars, NEVER from
+# "first signup wins" -----------------------------------------------------
+def _seed_admin():
+    """Create (or promote) the admin account from ROAD_ADMIN_EMAIL /
+    ROAD_ADMIN_PASSWORD when the database has no admin yet. Never
+    overwrites an existing admin's password. Safe to run in every
+    worker — the second one just finds the admin already there."""
+    email = os.environ.get("ROAD_ADMIN_EMAIL", "").strip().lower()
+    password = os.environ.get("ROAD_ADMIN_PASSWORD", "")
+    if not email or not password:
+        return
+    conn = store.connect()
+    try:
+        if conn.execute("SELECT id FROM users WHERE is_admin=1 LIMIT 1").fetchone():
+            return
+        existing = conn.execute(
+            "SELECT id FROM users WHERE email=?", (email,)).fetchone()
+        if existing:
+            conn.execute("UPDATE users SET is_admin=1 WHERE id=?",
+                         (existing["id"],))
+            conn.commit()
+            print("Seeded admin: promoted existing user %s to admin."
+                  % email, flush=True)
+            return
+        username = (email.split("@")[0] or "admin")[:50]
+        base, n = username, 1
+        while conn.execute("SELECT id FROM users WHERE username=?",
+                           (username,)).fetchone():
+            n += 1
+            username = "%s%d" % (base, n)
+        try:
+            conn.execute(
+                "INSERT INTO users (email, username, password_hash, is_admin,"
+                " created_at) VALUES (?,?,?,?,?)",
+                (email, username, generate_password_hash(password), 1,
+                 now_str()))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.rollback()  # another worker seeded first
+            return
+        print("Seeded admin account %s from ROAD_ADMIN_EMAIL."
+              % email, flush=True)
+    finally:
+        conn.close()
+
+
+_seed_admin()
+
+
+def _bump_session_version(user_id):
+    """Invalidate every existing session for a user (M2) — called on any
+    password change, reset, or admin-set password."""
+    conn = store.connect()
+    try:
+        conn.execute("UPDATE users SET session_version=session_version+1"
+                     " WHERE id=?", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _log_admin_action(admin_id, target_user_id, action):
+    """Audit trail for admin password changes and reset-code use (L7)."""
+    conn = store.connect()
+    try:
+        conn.execute(
+            "INSERT INTO admin_audit (admin_id, target_user_id, action, ip,"
+            " created_at) VALUES (?,?,?,?,?)",
+            (admin_id, target_user_id, action, request.remote_addr, now_str()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _login_user(user, remember):
+    """Fresh session on login/signup (M4): clear any pre-login session,
+    then store the user id and the session version (M2)."""
+    session.clear()
+    session["user_id"] = user["id"]
+    session["sv"] = user["session_version"]
+    session.permanent = bool(remember)
+
+
 def current_user():
     uid = session.get("user_id")
     if not uid:
         return None
     conn = store.connect()
     try:
-        return conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     finally:
         conn.close()
+    if not row:
+        return None
+    # M2: a session whose version no longer matches was killed by a
+    # password change — the user must log in again.
+    if session.get("sv") != row["session_version"]:
+        return None
+    return row
 
 
 def login_required(fn):
@@ -424,13 +617,14 @@ def _name_search(q):
     carriers as a fallback when SAFER finds nobody (or is unreachable)."""
     matches, err = search_by_name(q)
     if err:
+        app.logger.exception("SAFER name search failed for %r", q)
         rows = _local_carriers_by_name(q)
         if rows:
             return {"kind": "local_matches", "rows": rows,
                     "heading": "Saved carriers matching this name",
-                    "note": "Live SAFER name search is unavailable right now (%s) — showing carriers we already checked." % err}
+                    "note": "Live SAFER name search is unavailable right now — showing carriers we already checked."}
         return {"kind": "message",
-                "text": "SAFER name search is unavailable right now (%s). Try an MC or USDOT number instead." % err}
+                "text": "SAFER name search is unavailable right now. Try an MC or USDOT number instead."}
     if not matches:
         rows = _local_carriers_by_name(q)
         if rows:
@@ -615,18 +809,33 @@ def carrier_search():
         stype = "auto"
     bulk = (request.values.get("bulk") or "").strip()
     result = None
+    # H3: rate-limit the public search so one IP cannot hammer SAFER /
+    # Socrata or exhaust the server. Limits are generous for real use.
     if mode == "bulk" and bulk:
+        bulk_limit = 30 if user else 10  # per hour
+        if _rate_limited(("bulk", request.remote_addr), bulk_limit, 3600):
+            result = {"kind": "message",
+                      "text": "Too many bulk searches from this address — please try again later."}
+            return render_template("search.html", user=user, q=q, stype=stype,
+                                   result=result, mode=mode, bulk=bulk), 429
         try:
             result = _run_bulk_search(bulk)
-        except Exception as exc:
+        except Exception:
+            app.logger.exception("Bulk search failed")
             result = {"kind": "message",
-                      "text": "Bulk search failed: %s. Please try again." % exc}
+                      "text": "Bulk search failed. Please try again."}
     elif q:
+        if _rate_limited(("search", request.remote_addr), 30, 60):
+            result = {"kind": "message",
+                      "text": "Too many searches from this address — please wait a minute and try again."}
+            return render_template("search.html", user=user, q=q, stype=stype,
+                                   result=result, mode=mode, bulk=bulk), 429
         try:
             result = _run_carrier_search(q, stype)
-        except Exception as exc:
+        except Exception:
+            app.logger.exception("Carrier search failed for %r", q)
             result = {"kind": "message",
-                      "text": "Search failed: %s. Please try again." % exc}
+                      "text": "Search failed. Please try again."}
     return render_template("search.html", user=user, q=q, stype=stype,
                            result=result, mode=mode, bulk=bulk)
 
@@ -637,31 +846,37 @@ def login():
         return redirect(url_for("dashboard"))
     error = ""
     if request.method == "POST":
+        # H1: login attempts are rate-limited per IP (5/min, 20/hour).
+        if _rate_limited(("login", request.remote_addr), 5, 60) or \
+                _rate_limited(("login-h", request.remote_addr), 20, 3600):
+            error = "Too many login attempts from this address. Try again later."
+            return render_template("login.html", error=error), 429
         form = request.form.get("form", "login")
         conn = store.connect()
         try:
             if form == "signup":
-                email = (request.form.get("email") or "").strip().lower()
-                username = (request.form.get("username") or "").strip()
+                email = (request.form.get("email") or "").strip().lower()[:254]
+                username = (request.form.get("username") or "").strip()[:50]
                 password = request.form.get("password") or ""
-                if not email or not username or len(password) < 6:
-                    error = "Email, username and a password of 6+ characters are required."
+                if not email or not username or len(password) < MIN_PASSWORD_LEN:
+                    error = "Email, username and a password of %d+ characters are required." % MIN_PASSWORD_LEN
+                elif len(password) > 128:
+                    error = "Password must be at most 128 characters."
                 elif conn.execute("SELECT id FROM users WHERE email=? OR username=?",
                                   (email, username)).fetchone():
                     error = "An account with this email or username already exists. Try logging in instead."
                 else:
-                    is_admin = 1 if conn.execute(
-                        "SELECT COUNT(*) c FROM users").fetchone()["c"] == 0 else 0
+                    # C1: signup NEVER creates an admin. The admin account
+                    # comes only from ROAD_ADMIN_EMAIL / ROAD_ADMIN_PASSWORD.
                     conn.execute(
                         "INSERT INTO users (email, username, password_hash, is_admin,"
                         " created_at) VALUES (?,?,?,?,?)",
                         (email, username, generate_password_hash(password),
-                         is_admin, now_str()))
+                         0, now_str()))
                     conn.commit()
                     user = conn.execute(
                         "SELECT * FROM users WHERE email=?", (email,)).fetchone()
-                    session["user_id"] = user["id"]
-                    session.permanent = True
+                    _login_user(user, request.form.get("remember"))
                     return redirect(url_for("dashboard"))
             else:
                 ident = (request.form.get("identifier") or "").strip()
@@ -680,8 +895,7 @@ def login():
                         "UPDATE users SET last_login=?, login_count=login_count+1"
                         " WHERE id=?", (now_str(), user["id"]))
                     conn.commit()
-                    session["user_id"] = user["id"]
-                    session.permanent = bool(request.form.get("remember"))
+                    _login_user(user, request.form.get("remember"))
                     return redirect(url_for("dashboard"))
                 conn.commit()
                 error = "Invalid username/email or password."
@@ -692,7 +906,14 @@ def login():
 
 @app.route("/logout")
 def logout():
-    session.pop("user_id", None)
+    # Flask sessions are client-side (signed cookies), so clearing the
+    # session alone would leave the old cookie value valid. Bump the
+    # session version first so the old cookie dies for real — this signs
+    # the user out on every device.
+    user = current_user()
+    if user:
+        _bump_session_version(user["id"])
+    session.clear()
     return redirect(url_for("login"))
 
 
@@ -703,22 +924,23 @@ def forgot():
     message = ""
     error = ""
     if request.method == "POST":
-        email = (request.form.get("email") or "").strip().lower()
+        email = (request.form.get("email") or "").strip().lower()[:254]
         conn = store.connect()
         try:
             user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-            if not user:
-                error = "No account with that email."
-            else:
+            if user:
                 code = "%06d" % secrets.randbelow(1000000)
                 expires = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
                 conn.execute(
                     "INSERT INTO password_resets (user_id, code, created_at, expires_at)"
                     " VALUES (?,?,?,?)", (user["id"], code, now_str(), expires))
                 conn.commit()
-                message = ("Reset requested. Ask the site admin for your one-time code "
-                           "(Admin → Password Reset Requests), then use it on the "
-                           "Reset Password page. The code expires in 1 hour.")
+            # L2: the same message either way — never reveal whether the
+            # email has an account.
+            message = ("If an account exists for that email, a reset was requested. "
+                       "Ask the site admin for your one-time code "
+                       "(Admin → Password Reset Requests), then use it on the "
+                       "Reset Password page. The code expires in 1 hour.")
         finally:
             conn.close()
     return render_template("forgot.html", message=message, error=error)
@@ -729,9 +951,13 @@ def reset_password():
     error = ""
     done = False
     if request.method == "POST":
-        email = (request.form.get("email") or "").strip().lower()
+        email = (request.form.get("email") or "").strip().lower()[:254]
         code = (request.form.get("code") or "").strip()
         password = request.form.get("password") or ""
+        # H2: reset-code guesses are rate-limited per email (5 per 15 min).
+        if _rate_limited(("reset", email), 5, 900):
+            error = "Too many attempts for this email. Try again later."
+            return render_template("reset.html", error=error, done=done), 429
         conn = store.connect()
         try:
             user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
@@ -741,16 +967,31 @@ def reset_password():
                     "SELECT * FROM password_resets WHERE user_id=? AND code=? AND used=0"
                     " ORDER BY id DESC LIMIT 1", (user["id"], code)).fetchone()
             if not user or not row:
+                # H2: after 5 failed guesses the live code is invalidated,
+                # so the 6-digit code cannot be brute-forced.
+                with _RATE_LOCK:
+                    fails = _RESET_FAILURES.get(email, 0) + 1
+                    _RESET_FAILURES[email] = fails
+                if user and fails >= 5:
+                    conn.execute("UPDATE password_resets SET used=1"
+                                 " WHERE user_id=? AND used=0", (user["id"],))
+                    conn.commit()
+                    with _RATE_LOCK:
+                        _RESET_FAILURES.pop(email, None)
                 error = "Invalid email or code."
             elif row["expires_at"] < now_str():
                 error = "That code has expired. Request a new one."
-            elif len(password) < 6:
-                error = "Password must be at least 6 characters."
+            elif len(password) < MIN_PASSWORD_LEN or len(password) > 128:
+                error = "Password must be %d–128 characters." % MIN_PASSWORD_LEN
             else:
                 conn.execute("UPDATE users SET password_hash=? WHERE id=?",
                              (generate_password_hash(password), user["id"]))
                 conn.execute("UPDATE password_resets SET used=1 WHERE id=?", (row["id"],))
                 conn.commit()
+                with _RATE_LOCK:
+                    _RESET_FAILURES.pop(email, None)
+                _bump_session_version(user["id"])  # M2: kill other sessions
+                _log_admin_action(None, user["id"], "password_reset")
                 done = True
         finally:
             conn.close()
@@ -843,7 +1084,21 @@ def api_status():
 @login_required
 def api_start_scan():
     user = current_user()
-    if user["id"] in RUNNING_SCANS:
+    # H5: at most 10 scan starts per user per hour.
+    if _rate_limited(("scan", user["id"]), 10, 3600):
+        return jsonify({"ok": False,
+                        "error": "Too many scans started — try again later."}), 429
+    # L5: the one-scan check lives in the database, not only in process
+    # memory, so it holds across the 2 gunicorn workers.
+    mark_stale_scans_paused(user["id"])
+    conn = store.connect()
+    try:
+        running = conn.execute(
+            "SELECT id FROM scans WHERE user_id=? AND status='running' LIMIT 1",
+            (user["id"],)).fetchone()
+    finally:
+        conn.close()
+    if running or user["id"] in RUNNING_SCANS:
         return jsonify({"ok": False, "error": "A scan is already running."}), 400
     body = request.get_json(silent=True) or {}
     try:
@@ -1019,10 +1274,13 @@ def qualified():
     rows, states = _query_carriers(user["id"], "scan", f)
     if request.args.get("export") == "csv":
         return _carriers_csv(rows, "qualified-carriers.csv")
+    # L6: drop a caller-supplied "export" arg before re-passing the query
+    # string to url_for (a duplicate keyword would 500).
+    export_args = {k: v for k, v in request.args.items() if k != "export"}
     return render_template("qualified.html", user=user, rows=rows, states=states,
                            f=f, commodities=commodity_names(),
                            title="Qualified Carriers", source="scan",
-                           export_url=url_for("qualified", export="csv", **request.args))
+                           export_url=url_for("qualified", export="csv", **export_args))
 
 
 @app.route("/api/carrier/<int:cid>/star", methods=["POST"])
@@ -1082,7 +1340,25 @@ def motus_register_search():
 def _motus_page(kind, title):
     user = current_user()
     if request.method == "POST":
-        if user["id"] in RUNNING_MOTUS:
+        # H5: at most 10 Motus runs per user per hour.
+        if _rate_limited(("motus", user["id"]), 10, 3600):
+            flash("Too many Motus runs started — try again later.")
+            return redirect(request.path)
+        # L5: the one-run check lives in the database, not only in process
+        # memory, so it holds across the 2 gunicorn workers.
+        conn = store.connect()
+        try:
+            stale = conn.execute(
+                "SELECT id FROM motus_runs WHERE user_id=? AND status='running'"
+                " LIMIT 1", (user["id"],)).fetchone()
+            if stale and user["id"] not in RUNNING_MOTUS:
+                conn.execute("UPDATE motus_runs SET status='Stopped'"
+                             " WHERE id=?", (stale["id"],))
+                conn.commit()
+                stale = None
+        finally:
+            conn.close()
+        if stale or user["id"] in RUNNING_MOTUS:
             flash("A Motus run is already in progress.")
             return redirect(request.path)
         raw = request.form.get("usdots") or ""
@@ -1179,10 +1455,11 @@ def motus_qualified():
     rows, states = _query_carriers(user["id"], "motus", f)
     if request.args.get("export") == "csv":
         return _carriers_csv(rows, "motus-qualified.csv")
+    export_args = {k: v for k, v in request.args.items() if k != "export"}
     return render_template("qualified.html", user=user, rows=rows, states=states,
                            f=f, commodities=commodity_names(),
                            title="Motus Qualified", source="motus",
-                           export_url=url_for("motus_qualified", export="csv", **request.args))
+                           export_url=url_for("motus_qualified", export="csv", **export_args))
 
 
 @app.route("/register-qualified")
@@ -1193,10 +1470,11 @@ def register_qualified():
     rows, states = _query_carriers(user["id"], "register", f)
     if request.args.get("export") == "csv":
         return _carriers_csv(rows, "register-qualified.csv")
+    export_args = {k: v for k, v in request.args.items() if k != "export"}
     return render_template("qualified.html", user=user, rows=rows, states=states,
                            f=f, commodities=commodity_names(),
                            title="Register Qualified", source="register",
-                           export_url=url_for("register_qualified", export="csv", **request.args))
+                           export_url=url_for("register_qualified", export="csv", **export_args))
 
 
 # ---------------------------------------------------------------- restarted / saved / notes / pickup lines
@@ -1255,15 +1533,20 @@ def saved():
 def notes():
     user = current_user()
     if request.method == "POST":
+        # M7: sane length caps on free-text fields.
+        mc_number = (request.form.get("mc_number") or "").strip()[:20]
+        title = (request.form.get("title") or "").strip()[:200]
+        text = (request.form.get("text") or "").strip()
+        tags = (request.form.get("tags") or "").strip()[:200]
+        if len(text) > 5000:
+            flash("Note text is too long — at most 5,000 characters.")
+            return redirect(url_for("notes"))
         conn = store.connect()
         try:
             conn.execute(
                 "INSERT INTO notes (user_id, mc_number, title, text, tags, priority,"
                 " reminder_date, created_at) VALUES (?,?,?,?,?,?,?,?)",
-                (user["id"], (request.form.get("mc_number") or "").strip(),
-                 (request.form.get("title") or "").strip(),
-                 (request.form.get("text") or "").strip(),
-                 (request.form.get("tags") or "").strip(),
+                (user["id"], mc_number, title, text, tags,
                  request.form.get("priority") or "Normal",
                  request.form.get("reminder_date") or "", now_str()))
             conn.commit()
@@ -1427,6 +1710,7 @@ def settings_page():
     user = current_user()
     settings = get_settings(user["id"])
     message = ""
+    password_changed = False
     if request.method == "POST":
         section = request.form.get("section", "scanner")
         conn = store.connect()
@@ -1462,15 +1746,22 @@ def settings_page():
                 new = request.form.get("new_password") or ""
                 if not check_password_hash(user["password_hash"], cur):
                     message = "Current password is incorrect."
-                elif len(new) < 6:
-                    message = "New password must be at least 6 characters."
+                elif len(new) < MIN_PASSWORD_LEN or len(new) > 128:
+                    message = "New password must be %d–128 characters." % MIN_PASSWORD_LEN
                 else:
                     conn.execute("UPDATE users SET password_hash=? WHERE id=?",
                                  (generate_password_hash(new), user["id"]))
                     message = "Password changed."
+                    password_changed = True
             conn.commit()
         finally:
             conn.close()
+        if password_changed:
+            # M2: changing the password kills all other sessions. (Done
+            # after commit, on a fresh connection — the settings
+            # connection above still holds a write lock here.)
+            _bump_session_version(user["id"])
+            session["sv"] = user["session_version"] + 1
         settings = get_settings(user["id"])
     return render_template("settings.html", user=user, settings=settings,
                            message=message)
@@ -1509,7 +1800,7 @@ def delete_account():
         conn.commit()
     finally:
         conn.close()
-    session.pop("user_id", None)
+    session.clear()
     return redirect(url_for("login"))
 
 
@@ -1546,10 +1837,17 @@ def admin_page():
             "SELECT pr.*, u.email, u.username FROM password_resets pr"
             " JOIN users u ON u.id=pr.user_id"
             " ORDER BY pr.id DESC LIMIT 20").fetchall()
+        audit = conn.execute(
+            "SELECT a.*, u.username AS admin_name, t.username AS target_name"
+            " FROM admin_audit a"
+            " LEFT JOIN users u ON u.id=a.admin_id"
+            " LEFT JOIN users t ON t.id=a.target_user_id"
+            " ORDER BY a.id DESC LIMIT 20").fetchall()
         return render_template("admin.html", user=user,
                                users=[dict(r) for r in users],
                                events=[dict(r) for r in events],
-                               resets=[dict(r) for r in resets])
+                               resets=[dict(r) for r in resets],
+                               audit=[dict(r) for r in audit])
     finally:
         conn.close()
 
@@ -1557,18 +1855,32 @@ def admin_page():
 @app.route("/admin/set-password", methods=["POST"])
 @admin_required
 def admin_set_password():
+    admin = current_user()
     uid = request.form.get("user_id")
     new = request.form.get("new_password") or ""
-    if not uid or len(new) < 6:
-        flash("Select a user and a password of 6+ characters.")
+    # L6: a non-integer user id used to raise a 500.
+    try:
+        uid_int = int(uid) if uid else None
+    except (TypeError, ValueError):
+        uid_int = None
+    if not uid_int or len(new) < MIN_PASSWORD_LEN or len(new) > 128:
+        flash("Select a user and a password of %d–128 characters." % MIN_PASSWORD_LEN)
         return redirect(url_for("admin_page"))
     conn = store.connect()
     try:
+        target = conn.execute("SELECT id FROM users WHERE id=?",
+                              (uid_int,)).fetchone()
+        if not target:
+            flash("No such user.")
+            return redirect(url_for("admin_page"))
         conn.execute("UPDATE users SET password_hash=? WHERE id=?",
-                     (generate_password_hash(new), int(uid)))
+                     (generate_password_hash(new), uid_int))
         conn.commit()
     finally:
         conn.close()
+    # M2 + L7: the target's other sessions die, and the change is logged.
+    _bump_session_version(uid_int)
+    _log_admin_action(admin["id"], uid_int, "admin_set_password")
     flash("Password updated.")
     return redirect(url_for("admin_page"))
 
@@ -1581,5 +1893,10 @@ def health():
 
 
 if __name__ == "__main__":
+    # L6: never start with the debugger on — it is remote code execution.
+    if os.environ.get("FLASK_DEBUG") or \
+            os.environ.get("FLASK_ENV") == "development":
+        raise SystemExit(
+            "Refusing to start: FLASK_DEBUG / FLASK_ENV=development is set.")
     port = int(os.environ.get("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port, threaded=True)
+    app.run(host="0.0.0.0", port=port, threaded=True, debug=False)

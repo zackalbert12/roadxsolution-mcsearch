@@ -13,6 +13,7 @@
     </div>
     <div id="pane-login">
       <form method="post" action="{{ url_for('login') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="form" value="login">
         <label>Username or Email</label>
         <input type="text" name="identifier" placeholder="Username or email" required>
@@ -25,16 +26,18 @@
     </div>
     <div id="pane-signup" style="display:none">
       <form method="post" action="{{ url_for('login') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="form" value="signup">
         <label>Email</label>
         <input type="email" name="email" placeholder="you@example.com" required>
         <label>Username</label>
         <input type="text" name="username" placeholder="Pick a username" required>
         <label>Password</label>
-        <input type="password" name="password" placeholder="At least 6 characters" required minlength="6">
+        <input type="password" name="password" placeholder="At least 8 characters" required minlength="8">
+        <label class="checkbox" style="margin-top:12px"><input type="checkbox" name="remember" value="1" checked> Remember me</label>
         <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Create Account</button></div>
       </form>
-      <p class="muted" style="text-align:center;margin-top:12px">Create your account to get started — it takes less than a minute. The first account created becomes the site admin.</p>
+      <p class="muted" style="text-align:center;margin-top:12px">Create your account to get started — it takes less than a minute.</p>
     </div>
   </div>
 </div>

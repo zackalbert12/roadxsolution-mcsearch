@@ -93,11 +93,12 @@ let li = 0;
 function anotherLine(){ li = (li + 1) % LINES.length; document.getElementById('pickup-line').textContent = LINES[li]; }
 function copyLine(){ navigator.clipboard.writeText(document.getElementById('pickup-line').textContent); }
 function fmt(s){ s = Math.max(0, Math.floor(s||0)); return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0'); }
+function esc(v){ return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function pill(status){
   if (status === 'Qualified') return '<span class="pill green">Qualified</span>';
   if (status === 'Not Found') return '<span class="pill red">Not Found</span>';
   if (status === 'Error') return '<span class="pill red">Error</span>';
-  return '<span class="pill yellow">' + status + '</span>';
+  return '<span class="pill yellow">' + esc(status) + '</span>';
 }
 async function poll(){
   try {
@@ -124,7 +125,7 @@ async function poll(){
     document.getElementById('btn-resume').style.display = d.can_resume ? '' : 'none';
     const body = document.getElementById('log-body');
     body.innerHTML = d.recent_log.map(x =>
-      '<tr><td>' + x.mc_number + '</td><td>' + pill(x.status) + '</td><td>' + (x.entity||'') + '</td><td>' + (x.power_units||'') + '</td><td>' + (x.cargo||'') + '</td><td>' + x.checked_at + '</td><td>' + (x.note||'') + '</td></tr>').join('');
+      '<tr><td>' + esc(x.mc_number) + '</td><td>' + pill(x.status) + '</td><td>' + esc(x.entity) + '</td><td>' + esc(x.power_units) + '</td><td>' + esc(x.cargo) + '</td><td>' + esc(x.checked_at) + '</td><td>' + esc(x.note) + '</td></tr>').join('');
   } catch(e) {}
   setTimeout(poll, 1500);
 }
@@ -143,6 +144,7 @@ async function startScan(ev){
   }
   document.getElementById('scan-message').style.display = 'none';
   const fd = new FormData();
+  fd.append('csrf_token', csrfToken());
   fd.append('start_mc', s);
   fd.append('end_mc', e);
   const r = await fetch('{{ url_for("api_start_scan") }}', {method:'POST', body: fd});
@@ -151,19 +153,27 @@ async function startScan(ev){
   return false;
 }
 async function resumeScan(){
-  const r = await fetch('{{ url_for("api_resume_scan") }}', {method:'POST'});
+  const r = await fetch('{{ url_for("api_resume_scan") }}', {method:'POST', headers:{'X-CSRF-Token': csrfToken()}});
   const d = await r.json();
   if (!d.ok) showScanMessage(d.error || 'Could not resume scan.');
   else showScanMessage('Scan resumed from MC-' + d.resumed_from + '.');
 }
 async function stopScan(){
-  await fetch('{{ url_for("api_stop_scan") }}', {method:'POST'});
+  await fetch('{{ url_for("api_stop_scan") }}', {method:'POST', headers:{'X-CSRF-Token': csrfToken()}});
 }
 function applyCommodity(v){
   const note = document.getElementById('commodity-note');
   if (!v) { note.style.display = 'none'; return; }
   note.style.display = '';
-  note.innerHTML = 'Commodity <b>' + v + '</b> selected — after the scan, open <a href="{{ url_for("qualified") }}?commodity=' + encodeURIComponent(v) + '">Qualified Carriers</a> filtered by ' + v + ' to see matching MCs.';
+  note.textContent = '';
+  note.appendChild(document.createTextNode('Commodity '));
+  const b = document.createElement('b'); b.textContent = v; note.appendChild(b);
+  note.appendChild(document.createTextNode(' selected — after the scan, open '));
+  const a = document.createElement('a');
+  a.href = '{{ url_for("qualified") }}?commodity=' + encodeURIComponent(v);
+  a.textContent = 'Qualified Carriers';
+  note.appendChild(a);
+  note.appendChild(document.createTextNode(' filtered by ' + v + ' to see matching MCs.'));
 }
 poll();
 </script>

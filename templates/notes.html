@@ -8,6 +8,7 @@
   <div class="card">
     <h2>New note</h2>
     <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>MC Number — which carrier is this note about?</label><input type="text" name="mc_number" placeholder="e.g. 1788002">
       <label>Note Title — a short name for this note</label><input type="text" name="title" placeholder="e.g. Called carrier — wants reefer loads">
       <label>Note — what happened, what to do next</label><textarea name="text" rows="4" placeholder="e.g. Spoke to the owner, truck is empty in Dallas on Monday, call back Friday."></textarea>
@@ -30,6 +31,7 @@
         <p>{{ n.text }}</p>
         <div class="muted">{{ n.tags }}{% if n.reminder_date %} · Reminder: {{ n.reminder_date }}{% endif %} · {{ n.created_at }}</div>
         <form method="post" action="{{ url_for('delete_note', nid=n.id) }}" style="margin-top:6px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button class="btn secondary small" type="submit">Delete</button>
         </form>
       </div>

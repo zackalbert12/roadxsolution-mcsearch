@@ -8,5 +8,12 @@ services:
     envVars:
       - key: SECRET_KEY
         generateValue: true
+      # The admin account is seeded from these at startup (never by
+      # "first signup wins"). Set the password in the Render dashboard —
+      # never commit it here.
+      - key: ROAD_ADMIN_EMAIL
+        value: zackalbert.dispatch@gmail.com
+      - key: ROAD_ADMIN_PASSWORD
+        sync: false
       - key: PYTHON_VERSION
         value: 3.12.0

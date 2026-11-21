@@ -380,6 +380,10 @@ def fetch_company_officer(dot_number):
                        (row.get("company_officer_2") or "").strip() or None
     except Exception:
         name = None
+    # L5: bound the cache (max 1,000 DOTs, oldest evicted) so it cannot
+    # grow without limit over the life of the process.
+    if len(_OFFICER_CACHE) >= 1000:
+        _OFFICER_CACHE.pop(next(iter(_OFFICER_CACHE)))
     _OFFICER_CACHE[dot] = name
     return name
 

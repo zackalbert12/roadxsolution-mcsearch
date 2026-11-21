@@ -45,7 +45,7 @@ async function copyPhone(btn, phone){
   setTimeout(function(){ btn.textContent = old; btn.classList.remove('copied'); }, 1200);
 }
 async function toggleStar(id, btn){
-  const r = await fetch('/api/carrier/' + id + '/star', {method:'POST'});
+  const r = await fetch('/api/carrier/' + id + '/star', {method:'POST', headers:{'X-CSRF-Token': csrfToken()}});
   const d = await r.json();
   if (d.ok) btn.closest('tr').remove();
 }

@@ -17,8 +17,9 @@
         <td>{{ u.created_at }}</td><td>{{ u.last_login or '—' }}</td><td>{{ u.login_count }}</td>
         <td>
           <form method="post" action="{{ url_for('admin_set_password') }}" style="display:flex;gap:6px">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="user_id" value="{{ u.id }}">
-            <input type="text" name="new_password" placeholder="New password" style="width:130px;padding:6px">
+            <input type="password" name="new_password" placeholder="New password" style="width:130px;padding:6px">
             <button class="btn small" type="submit">Set</button>
           </form>
         </td>
@@ -62,5 +63,20 @@
     </tbody>
   </table></div>
   <p class="muted">Every login — good or bad — shows up here, newest first.</p>
+</div>
+
+<div class="card">
+  <h2>Admin Audit Log (latest 20)</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Time</th><th>Action</th><th>By Admin</th><th>Target User</th><th>IP</th></tr></thead>
+    <tbody>
+    {% for a in audit %}
+      <tr><td>{{ a.created_at }}</td><td>{{ a.action }}</td><td>{{ a.admin_name or '— (reset flow)' }}</td><td>{{ a.target_name or a.target_user_id }}</td><td>{{ a.ip }}</td></tr>
+    {% else %}
+      <tr><td colspan="5" class="empty">No admin password changes yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="muted">Every password set by an admin, and every password reset with a one-time code, is recorded here.</p>
 </div>
 {% endblock %}

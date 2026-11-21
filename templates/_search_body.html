@@ -16,6 +16,7 @@
 {% if mode == 'bulk' %}
 <div class="card">
   <form method="post" action="{{ url_for('carrier_search') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="mode" value="bulk">
     <label>Paste MC or DOT numbers — one per line (up to 50 per search)</label>
     <textarea name="bulk" rows="8" placeholder="MC 1630009&#10;4218222&#10;DOT 1677211" required>{{ bulk }}</textarea>

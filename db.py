@@ -22,7 +22,16 @@ CREATE TABLE IF NOT EXISTS users (
     plan TEXT NOT NULL DEFAULT 'Lifetime',
     created_at TEXT NOT NULL,
     last_login TEXT,
-    login_count INTEGER NOT NULL DEFAULT 0
+    login_count INTEGER NOT NULL DEFAULT 0,
+    session_version INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS admin_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_id INTEGER,
+    target_user_id INTEGER,
+    action TEXT NOT NULL,
+    ip TEXT,
+    created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS login_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,6 +176,11 @@ def init_db():
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        # Migration for databases created before session_version existed.
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if "session_version" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN"
+                         " session_version INTEGER NOT NULL DEFAULT 0")
         conn.commit()
     finally:
         conn.close()
