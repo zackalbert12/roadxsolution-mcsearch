@@ -8,6 +8,8 @@
 
 <div class="card">
   <form method="get" id="qualified-filter">
+  {% if f.scan_id %}<input type="hidden" name="scan_id" value="{{ f.scan_id }}">
+  <p class="notice">Showing carriers from scan {{ f.scan_id }} — <a href="{{ url_for('history') }}">back to Scan History</a> · <a href="{{ request.path }}">show all</a></p>{% endif %}
   <div class="form-row">
     <div><label>Search — name, MC, phone or city</label><input type="text" name="q" value="{{ f.q }}" placeholder="Name, MC, phone, city"></div>
     <div><label>State — where the carrier is based</label>

@@ -2672,6 +2672,8 @@ def _carrier_filters(args):
         "commodities": _parse_commodities(args),
         "sort": (args.get("sort") or "mc").strip(),
         "starred": args.get("starred") == "1",
+        # History per-scan link: only carriers from this scan/run.
+        "scan_id": (args.get("scan_id") or "").strip(),
     }
 
 
@@ -2697,6 +2699,9 @@ def _query_carriers(user_id, source, f):
             params.append('%"' + f["cargo"] + '"%')
         if f["starred"]:
             sql += " AND starred=1"
+        if f.get("scan_id"):
+            sql += " AND scan_id=?"
+            params.append(f["scan_id"])
         if f["q"]:
             sql += (" AND (legal_name LIKE ? OR mc_number LIKE ?"
                     " OR phone LIKE ? OR city LIKE ?)")
