@@ -3,7 +3,7 @@
 {% block auth %}
 <div class="auth-wrap">
   <div class="auth-card">
-    <h1>RoadxSolution<br>mcsearch</h1>
+    <img class="auth-logo" src="{{ url_for('static', filename='roadx-logo.jpg') }}" alt="RoadX Solutions">
     <p style="text-align:center">Sign in to your dispatcher workspace</p>
     <p class="muted" style="text-align:center">Log in to scan MC numbers and see your carriers. New here? Press Sign Up below.</p>
     {% if error %}<div class="alert">{{ error }}</div>{% endif %}

@@ -11,7 +11,7 @@
 {% if user %}
 <aside class="sidebar">
   <div class="brand">
-    <div class="logo">RoadxSolution<br>mcsearch</div>
+    <img class="brand-logo" src="{{ url_for('static', filename='roadx-logo.jpg') }}" alt="RoadX Solutions">
     <div class="tag">MC Scanner &amp; Dispatch Tools</div>
   </div>
   <nav>
@@ -56,7 +56,7 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </div>
-  <div class="footer">Trusted by Dispatchers Nationwide &nbsp;·&nbsp; Fast. Reliable. Secure.<br>© 2026 All Rights Reserved by RoadxSolution-mcsearch</div>
+  <div class="footer">Trusted by Dispatchers Nationwide &nbsp;·&nbsp; Fast. Reliable. Secure.<br><span class="footer-tag">SMART DISPATCH. STRONGER PROFITS.</span><br>© 2026 All Rights Reserved by RoadxSolution-mcsearch</div>
 </div>
 {% else %}
   {% with messages = get_flashed_messages() %}
