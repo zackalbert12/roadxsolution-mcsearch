@@ -134,6 +134,13 @@ CREATE TABLE IF NOT EXISTS notes (
     reminder_date TEXT,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS custom_pickup_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    categories TEXT NOT NULL,
+    line TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS motus_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,

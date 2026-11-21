@@ -3,7 +3,7 @@
 {% block content %}
 <div class="hero"><h1>Pickup Lines</h1>
 <p>Short lines to start a call — pick one, tap Copy, then say it on the phone.</p>
-<p class="next">What to do: pick a category, or search for a word like “Monday”.</p></div>
+<p class="next">What to do: pick a category, or search for a word like “Monday”. A line can sit in more than one category — e.g. a Monday-morning reefer line shows under Monday, Morning and Reefer.</p></div>
 <div class="card">
   <div style="margin-bottom:12px">
     <a class="btn {% if not category %}secondary{% endif %} small" href="{{ url_for('pickup_lines') }}">All</a>
@@ -18,11 +18,19 @@
   </form>
 </div>
 <div class="card">
-  <h2>All Pickup Lines ({{ lines|length }})</h2>
-  {% for c, t in lines %}
+  <h2>{% if category %}{{ category }} Lines{% else %}All Pickup Lines{% endif %} ({{ lines|length }})</h2>
+  {% for ln in lines %}
     <div style="display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #f3f4f6;padding:10px 0">
-      <div><span class="pill orange">{{ c }}</span> <span class="line-card" style="font-size:14px">{{ t }}</span></div>
-      <button class="btn secondary small copy-line-btn" type="button" data-line="{{ t }}">Copy</button>
+      <div>{% for tag in ln.tags %}<span class="pill orange">{{ tag }}</span> {% endfor %}<span class="line-card" style="font-size:14px">{{ ln.text }}</span></div>
+      <div style="display:flex;gap:6px;align-items:flex-start;flex-shrink:0">
+        <button class="btn secondary small copy-line-btn" type="button" data-line="{{ ln.text }}">Copy</button>
+        {% if ln.custom_id and user.is_admin %}
+        <form method="post" action="{{ url_for('delete_pickup_line', lid=ln.custom_id) }}" onsubmit="return confirm('Delete this line?');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn secondary small" type="submit">Delete</button>
+        </form>
+        {% endif %}
+      </div>
     </div>
   {% else %}
     <div class="empty-state">
@@ -31,6 +39,24 @@
     </div>
   {% endfor %}
 </div>
+{% if user.is_admin %}
+<div class="card">
+  <h2>Add a Pickup Line</h2>
+  <p style="color:#666;font-size:14px">Owner only. Pick every category the line fits — e.g. a Monday-morning reefer line gets Monday, Morning and Reefer.</p>
+  <form method="post" action="{{ url_for('add_pickup_line') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div><label>Line — what to say on the call</label><input type="text" name="line" maxlength="500" placeholder="Hi, this is Zack…" style="width:100%"></div>
+    {% for group, cats in category_groups %}
+    <div style="margin-top:10px"><b>{{ group }}</b><br>
+      {% for c in cats %}
+      <label style="display:inline-block;margin:4px 12px 4px 0;font-weight:normal"><input type="checkbox" name="categories" value="{{ c }}"> {{ c }}</label>
+      {% endfor %}
+    </div>
+    {% endfor %}
+    <div style="margin-top:12px"><button class="btn" type="submit">Add Line</button></div>
+  </form>
+</div>
+{% endif %}
 <script>
 // Copy buttons pass the line via a data-* attribute (Jinja autoescape makes
 // it safe in attributes) instead of an inline onclick handler, whose

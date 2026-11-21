@@ -41,7 +41,8 @@ from safer import check_mc, check_usdot, search_by_name, fetch_company_officer
 from commodity import (COMMODITIES, EQUIPMENT_COMMODITIES, commodity_names,
                         equipment_label, expected_trucks,
                         filter_carriers_by_commodity)
-from pickup_lines import PICKUP_LINES, CATEGORIES, lines_for
+from pickup_lines import (PICKUP_LINES, CATEGORIES, CATEGORY_GROUPS,
+                          lines_for)
 
 app = Flask(__name__)
 # H4: no hardcoded fallback key. Audit fix 3 — if SECRET_KEY is unset,
@@ -2965,11 +2966,78 @@ def pickup_lines():
     user = current_user()
     category = (request.args.get("category") or "").strip()
     q = (request.args.get("q") or "").strip().lower()
-    lines = lines_for(category if category in CATEGORIES else None)
+    # Built-in lines (tags) plus owner-added custom lines from the DB.
+    lines = [{"tags": list(tags), "text": t, "custom_id": None}
+             for tags, t in lines_for(category if category in CATEGORIES else None)]
+    conn = store.connect()
+    try:
+        custom = conn.execute(
+            "SELECT * FROM custom_pickup_lines ORDER BY id").fetchall()
+    finally:
+        conn.close()
+    for row in custom:
+        tags = [c.strip() for c in (row["categories"] or "").split(",") if c.strip()]
+        if category and category in CATEGORIES and category not in tags:
+            continue
+        lines.append({"tags": tags, "text": row["line"],
+                      "custom_id": row["id"]})
     if q:
-        lines = [(c, t) for c, t in lines if q in t.lower()]
+        lines = [ln for ln in lines
+                 if q in ln["text"].lower()
+                 or any(q in tag.lower() for tag in ln["tags"])]
     return render_template("pickup_lines.html", user=user, lines=lines,
-                           categories=CATEGORIES, category=category, q=q)
+                           categories=CATEGORIES,
+                           category_groups=CATEGORY_GROUPS,
+                           category=category, q=q)
+
+
+@app.route("/pickup-lines/add", methods=["POST"])
+@admin_required
+def add_pickup_line():
+    """Owner-only: add a custom pickup line with one or more categories.
+
+    There was no add-line form before — built-in lines live in
+    pickup_lines.py and only change with a deploy. Custom lines live
+    in the custom_pickup_lines table so the owner can add them at
+    runtime; they show on the page alongside the built-ins.
+    """
+    user = current_user()
+    text = (request.form.get("line") or "").strip()
+    cats = [c for c in request.form.getlist("categories") if c in CATEGORIES]
+    if not text:
+        flash("Write the line first — the text was empty.")
+        return redirect(url_for("pickup_lines"))
+    if len(text) > 500:
+        flash("That line is too long — at most 500 characters.")
+        return redirect(url_for("pickup_lines"))
+    if not cats:
+        flash("Pick at least one category for the line.")
+        return redirect(url_for("pickup_lines"))
+    conn = store.connect()
+    try:
+        conn.execute(
+            "INSERT INTO custom_pickup_lines (user_id, categories, line,"
+            " created_at) VALUES (?,?,?,?)",
+            (user["id"], ",".join(cats), text, now_str()))
+        conn.commit()
+    finally:
+        conn.close()
+    flash("Line added under %s." % ", ".join(cats))
+    return redirect(url_for("pickup_lines", category=cats[0]))
+
+
+@app.route("/pickup-lines/delete/<int:lid>", methods=["POST"])
+@admin_required
+def delete_pickup_line(lid):
+    """Owner-only: delete a custom (owner-added) line. Built-in lines
+    live in pickup_lines.py and cannot be deleted from the page."""
+    conn = store.connect()
+    try:
+        conn.execute("DELETE FROM custom_pickup_lines WHERE id=?", (lid,))
+        conn.commit()
+    finally:
+        conn.close()
+    return redirect(url_for("pickup_lines"))
 
 
 @app.route("/cargo-guide")
@@ -3222,10 +3290,26 @@ def about():
 @app.route("/api/reference")
 @login_required
 def api_reference():
+    # "category" is the primary (first) tag, kept for backward
+    # compatibility; "categories" is the full tag list.
+    lines = [{"categories": list(tags), "category": tags[0], "line": t}
+             for tags, t in PICKUP_LINES]
+    conn = store.connect()
+    try:
+        custom = conn.execute(
+            "SELECT * FROM custom_pickup_lines ORDER BY id").fetchall()
+    finally:
+        conn.close()
+    for row in custom:
+        tags = [c.strip() for c in (row["categories"] or "").split(",")
+                if c.strip()]
+        lines.append({"categories": tags,
+                      "category": tags[0] if tags else "",
+                      "line": row["line"]})
     return jsonify({
         "commodities": COMMODITIES,
         "commodity_names": commodity_names(),
-        "pickup_lines": [{"category": c, "line": t} for c, t in PICKUP_LINES],
+        "pickup_lines": lines,
     })
 
 
