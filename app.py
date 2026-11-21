@@ -37,7 +37,7 @@ except ImportError:  # pragma: no cover - missing dependency
 import db as store
 from safer import check_mc, check_usdot, search_by_name, fetch_company_officer
 from commodity import (COMMODITIES, EQUIPMENT_COMMODITIES, commodity_names,
-                        filter_carriers_by_commodity)
+                        expected_trucks, filter_carriers_by_commodity)
 from pickup_lines import PICKUP_LINES, CATEGORIES, lines_for
 
 app = Flask(__name__)
@@ -864,6 +864,9 @@ def _detail_result(rec, param):
     dot = rec.get("usdot_number") or ""
     if dot and not rec.get("owner_officer"):
         rec["owner_officer"] = fetch_company_officer(dot)
+    # Cargo-based estimate of the carrier's truck types (SAFER records
+    # no truck type) — shown in the "Expected Truck" box on the detail.
+    rec["expected_trucks"] = expected_trucks(rec.get("cargo_carried"))
     return {"kind": "detail", "rec": rec,
             "safer_url": _safer_url(param, value or "")}
 

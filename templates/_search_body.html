@@ -74,20 +74,34 @@
     {% set rec = result.rec %}
     {% set is_active = rec.found and not rec.inactive and not rec.fetch_error and (rec.authority_status or '').upper().startswith('AUTHORIZED FOR') %}
     <div class="card">
-      <h2>{{ rec.legal_name or 'Carrier' }}
-        {% if rec.status == 'Qualified' %}<span class="pill green">Qualified</span>
-        {% elif rec.status == 'Not Found' or rec.status == 'Error' %}<span class="pill red">{{ rec.status }}</span>
-        {% else %}<span class="pill yellow">{{ rec.status }}</span>{% endif %}
-      </h2>
-      {% if rec.status == 'Qualified' %}<p class="next">Good to call — this carrier is authorised and hauls cargo that matches.</p>
-      {% elif rec.status == 'Not Found' %}<p class="next">No SAFER record for this number — check the number and try again.</p>
-      {% elif rec.status == 'Error' %}<p class="next">The check failed — try again in a moment.</p>
-      {% else %}<p class="next">Skipped — see the reason in the Status section below.</p>{% endif %}
+      <div class="detail-head">
+        <div class="detail-head-main">
+          <h2>{{ rec.legal_name or 'Carrier' }}
+            {% if rec.status == 'Qualified' %}<span class="pill green">Qualified</span>
+            {% elif rec.status == 'Not Found' or rec.status == 'Error' %}<span class="pill red">{{ rec.status }}</span>
+            {% else %}<span class="pill yellow">{{ rec.status }}</span>{% endif %}
+          </h2>
+          {% if rec.status == 'Qualified' %}<p class="next">Good to call — this carrier is authorised and hauls cargo that matches.</p>
+          {% elif rec.status == 'Not Found' %}<p class="next">No SAFER record for this number — check the number and try again.</p>
+          {% elif rec.status == 'Error' %}<p class="next">The check failed — try again in a moment.</p>
+          {% else %}<p class="next">Skipped — see the reason in the Status section below.</p>{% endif %}
+        </div>
+        <div class="expected-box">
+          <div class="expected-title">Expected Truck</div>
+          {% if rec.expected_trucks %}
+            <div class="expected-trucks">{% for t in rec.expected_trucks %}<span class="pill blue">{{ t }}</span> {% endfor %}</div>
+          {% else %}
+            <div class="expected-trucks muted">Not enough info</div>
+          {% endif %}
+          <div class="muted" style="font-size:12px">Cargo se andaza — confirm nahi.</div>
+        </div>
+      </div>
       <p><button class="btn" type="button" onclick="copyAllDetails(this)"
         data-name="{{ rec.legal_name }}" data-dba="{{ rec.dba_name or '' }}"
         data-owner="{{ rec.owner_officer or '' }}"
         data-mc="{{ rec.mc_number }}" data-dot="{{ rec.usdot_number }}"
         data-phone="{{ rec.phone or '' }}"
+        data-expected="{{ rec.expected_trucks | join(', ') }}"
         data-address="{{ rec.address_line1 or '' }}{% if rec.city %}, {{ rec.city }}, {{ rec.state }}{% endif %}">Copy all details</button></p>
       {% if result.matched %}<p class="muted">Matched name search: <b>{{ result.matched.name }}</b> — {{ result.matched.location }}</p>{% endif %}
       <div class="detail-section">
@@ -203,6 +217,7 @@ function copyAllDetails(btn){
   const dot = g('dot'); if (dot) lines.push('USDOT: ' + dot);
   const phone = g('phone'); if (phone) lines.push('Phone: ' + phone);
   const addr = g('address').replace(/^,\s*/, ''); if (addr) lines.push('Address: ' + addr);
+  const expected = g('expected'); if (expected) lines.push('Expected Truck: ' + expected);
   const text = lines.join('\n');
   if (!text) return;
   const done = function(){

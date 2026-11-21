@@ -251,3 +251,25 @@ def filter_carriers_by_commodity(carriers, commodity):
         if carrier_matches_commodity(cargo, commodity):
             out.append(c)
     return out
+
+
+def expected_trucks(cargo_carried):
+    """Estimate a carrier's truck types from its SAFER cargo list.
+
+    SAFER does not record truck type, so this is a best guess only: for
+    each commodity whose SAFER cargo keywords intersect the carrier's
+    cargo list, each of its equipment types gets one vote. Equipment is
+    ordered by votes descending, ties alphabetical. Returns [] when
+    there is no cargo or no commodity matches. Only the existing
+    COMMODITIES data is used — no new cargo mappings.
+    """
+    cargo = [c.strip().lower() for c in (cargo_carried or [])
+             if c and c.strip()]
+    if not cargo:
+        return []
+    votes = {}
+    for info in COMMODITIES.values():
+        if any(kw.lower() in cargo for kw in info["keywords"]):
+            for eq in info["equipment"]:
+                votes[eq] = votes.get(eq, 0) + 1
+    return sorted(votes, key=lambda eq: (-votes[eq], eq))

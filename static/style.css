@@ -154,6 +154,19 @@ tr:hover td { background: #fafafa; }
 .empty { text-align: center; color: var(--grey-text); padding: 30px; }
 .line-card { font-size: 17px; line-height: 1.6; color: var(--navy); }
 
+/* Expected Truck box on the Carrier Search detail — cargo-based estimate.
+   Compact box on the right side of the header, beside the carrier name. */
+.detail-head { display: flex; gap: 16px; align-items: flex-start;
+  justify-content: space-between; flex-wrap: wrap; }
+.detail-head-main { flex: 1 1 260px; min-width: 0; }
+.detail-head-main h2 { margin-top: 0; }
+.detail-head .expected-box { flex: 0 1 240px; margin: 0; }
+.expected-box { background: var(--blue-pale); border: 1px solid #bfdbfe;
+  border-radius: 10px; padding: 10px 12px; }
+.expected-box .expected-title { font-size: 12px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .6px; color: #1e40af; margin-bottom: 6px; }
+.expected-box .expected-trucks { font-size: 14px; }
+
 /* tap-to-copy phone numbers (Qualified Carriers, Saved, Restarted) */
 .phone-copy { background: none; border: none; padding: 0; margin: 0; font: inherit; color: var(--orange); cursor: pointer; text-align: left; white-space: nowrap; }
 .phone-copy:hover { text-decoration: underline; }
