@@ -4,10 +4,10 @@
 <div class="auth-wrap">
   <div class="auth-card">
     <h1>Reset Password</h1>
-    <p class="muted" style="text-align:center">Type your email, the one-time code from the admin, and a new password.</p>
+    <p class="muted text-center">Type your email, the one-time code from the admin, and a new password.</p>
     {% if done %}
       <div class="notice">Password updated. You can now log in with your new password.</div>
-      <p style="text-align:center"><a href="{{ url_for('login') }}">Go to login</a></p>
+      <p class="text-center"><a href="{{ url_for('login') }}">Go to login</a></p>
     {% else %}
       {% if error %}<div class="alert">{{ error }}</div>{% endif %}
       <form method="post">
@@ -18,9 +18,9 @@
         <input type="text" name="code" placeholder="Code from the admin" required>
         <label>New password</label>
         <input type="password" name="password" placeholder="At least 8 characters" required minlength="8">
-        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Set New Password</button></div>
+        <div class="mt-16"><button class="btn w-full" type="submit">Set New Password</button></div>
       </form>
-      <p style="text-align:center;margin-top:14px"><a href="{{ url_for('login') }}">Back to login</a></p>
+      <p class="text-center mt-14"><a href="{{ url_for('login') }}">Back to login</a></p>
     {% endif %}
   </div>
 </div>

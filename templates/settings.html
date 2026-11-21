@@ -27,7 +27,7 @@
     <input type="hidden" name="section" value="password">
     <label>Current password</label><input type="password" name="current_password" placeholder="Your current password" required>
     <label>New password</label><input type="password" name="new_password" placeholder="At least 8 characters" required minlength="8">
-    <div style="margin-top:14px"><button class="btn" type="submit">Change Password</button></div>
+    <div class="mt-14"><button class="btn" type="submit">Change Password</button></div>
   </form>
 </div>
 
@@ -46,7 +46,7 @@
         </select>
       </div>
     </div>
-    <div style="margin-top:14px"><button class="btn" type="submit">Save Appearance</button></div>
+    <div class="mt-14"><button class="btn" type="submit">Save Appearance</button></div>
   </form>
 </div>
 
@@ -60,7 +60,7 @@
     <label class="checkbox"><input type="checkbox" name="notify_scan" {% if settings.notify_scan %}checked{% endif %}> Scan Completion Alerts</label>
     <label class="checkbox"><input type="checkbox" name="notify_qualified" {% if settings.notify_qualified %}checked{% endif %}> New Qualified Carrier Alerts</label>
     <label class="checkbox"><input type="checkbox" name="notify_weekly" {% if settings.notify_weekly %}checked{% endif %}> Weekly Summary Reports</label>
-    <div style="margin-top:14px"><button class="btn" type="submit">Save Changes</button></div>
+    <div class="mt-14"><button class="btn" type="submit">Save Changes</button></div>
   </form>
 </div>
 
@@ -68,9 +68,10 @@
   <h2>Danger Zone</h2>
   <p class="muted">Be careful — Export downloads all your data, Delete removes your account and everything in it. This cannot be undone.</p>
   <p><a class="btn secondary" href="{{ url_for('export_data') }}">Export My Data</a></p>
-  <form method="post" action="{{ url_for('delete_account') }}" onsubmit="if(!confirm('Delete your account and all its data? This cannot be undone.')) return false; var b=this.querySelector('button[type=submit]'); b.disabled=true; b.textContent='Deleting…'; return true;">
+  <form method="post" action="{{ url_for('delete_account') }}" id="delete-account-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button class="btn danger" type="submit">Delete My Account</button>
   </form>
 </div>
+<script src="{{ url_for('static', filename='settings.js') }}"></script>
 {% endblock %}

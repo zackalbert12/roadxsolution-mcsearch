@@ -10,13 +10,13 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b></td>
-      <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.legal_name }}</button></b><br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
-      <td>{% if r.phone %}<button class="phone-copy" data-phone="{{ r.phone }}" onclick="copyPhone(this)"" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td><td>{{ r.power_units }}</td>
+      <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" title="Tap to copy">MC-{{ r.mc_number }}</button></b></td>
+      <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" title="Tap to copy">{{ r.legal_name }}</button></b><br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
+      <td>{% if r.phone %}<button class="phone-copy" data-phone="{{ r.phone }}" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td><td>{{ r.power_units }}</td>
       <td>{% for c in r.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}</td>
       <td><span class="calldot {{ r.call_status }}"></span>Calls: {{ r.calls }}</td>
       <td><a class="btn secondary" href="{{ url_for('carrier_search', q=r.mc_number, type='mc') }}">View</a>
-      <button class="star on" onclick="toggleStar({{ r.id }}, this)" title="Unstar">★</button></td>
+      <button class="star star-unstar on" data-carrier-id="{{ r.id }}" title="Unstar">★</button></td>
     </tr>
   {% else %}
     <tr><td colspan="7" class="empty">No saved MCs yet.</td></tr>
@@ -31,26 +31,5 @@
 </div>
 {% endif %}
 </div>
-<script>
-async function copyPhone(btn){
-  const phone = btn.getAttribute('data-phone');
-  if(!phone) return;
-  try { await navigator.clipboard.writeText(phone); }
-  catch(e){
-    const t = document.createElement('textarea');
-    t.value = phone; document.body.appendChild(t); t.select();
-    try { document.execCommand('copy'); } catch(_){}
-    t.remove();
-  }
-  btn.classList.add('copied');
-  const old = btn.textContent;
-  btn.textContent = 'Copied ✓';
-  setTimeout(function(){ btn.textContent = old; btn.classList.remove('copied'); }, 1200);
-}
-async function toggleStar(id, btn){
-  const r = await fetch('/api/carrier/' + id + '/star', {method:'POST', headers:{'X-CSRF-Token': csrfToken()}});
-  const d = await r.json();
-  if (d.ok) btn.closest('tr').remove();
-}
-</script>
+<script src="{{ url_for('static', filename='saved.js') }}"></script>
 {% endblock %}

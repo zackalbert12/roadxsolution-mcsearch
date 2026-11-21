@@ -4,65 +4,65 @@
 <div class="auth-wrap">
   <div class="auth-card">
     <img class="auth-logo" src="{{ url_for('static', filename='roadx-logo.jpg') }}" alt="RoadX Solutions">
-    <p style="text-align:center">Sign in to your dispatcher workspace</p>
-    <p class="muted" style="text-align:center">Log in to scan MC numbers and see your carriers. New here? Press Sign Up below.</p>
+    <p class="text-center">Sign in to your dispatcher workspace</p>
+    <p class="muted text-center">Log in to scan MC numbers and see your carriers. New here? Press Sign Up below.</p>
     {% if error %}<div class="alert">{{ error }}</div>{% endif %}
     {% if message %}<div class="notice">{{ message }}</div>{% endif %}
     {% if totp_required %}
     <div id="pane-totp">
-      <p style="text-align:center"><b>Two-factor authentication</b><br><span class="muted">Enter the 6-digit code from your authenticator app{% if totp_username %} for <b>{{ totp_username }}</b>{% endif %}.</span></p>
+      <p class="text-center"><b>Two-factor authentication</b><br><span class="muted">Enter the 6-digit code from your authenticator app{% if totp_username %} for <b>{{ totp_username }}</b>{% endif %}.</span></p>
       <form method="post" action="{{ url_for('login_totp') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label>Verification code</label>
         <input type="text" name="totp_code" placeholder="123456" required maxlength="6" inputmode="numeric" autocomplete="one-time-code">
-        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Verify &amp; Sign In</button></div>
+        <div class="mt-16"><button class="btn w-full" type="submit">Verify &amp; Sign In</button></div>
       </form>
-      <p style="text-align:center;margin-top:10px"><a href="{{ url_for('login') }}">Back to sign in</a></p>
+      <p class="text-center mt-10"><a href="{{ url_for('login') }}">Back to sign in</a></p>
     </div>
     {% elif otp_request %}
     <div id="pane-otp-request">
-      <p style="text-align:center"><b>Sign in with an email code</b><br><span class="muted">We will email a 6-digit code to your registered address. It expires in 10 minutes.</span></p>
+      <p class="text-center"><b>Sign in with an email code</b><br><span class="muted">We will email a 6-digit code to your registered address. It expires in 10 minutes.</span></p>
       <form method="post" action="{{ url_for('login_otp_request') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label>Username or Email</label>
         <input type="text" name="identifier" placeholder="Username or email" required>
-        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Send Login Code</button></div>
+        <div class="mt-16"><button class="btn w-full" type="submit">Send Login Code</button></div>
       </form>
-      <p style="text-align:center;margin-top:10px"><a href="{{ url_for('login') }}">Back to password sign in</a></p>
+      <p class="text-center mt-10"><a href="{{ url_for('login') }}">Back to password sign in</a></p>
     </div>
     {% elif otp_verify %}
     <div id="pane-otp-verify">
-      <p style="text-align:center"><b>Enter your login code</b><br><span class="muted">We emailed a 6-digit code{% if otp_identifier %} for <b>{{ otp_identifier }}</b>{% endif %}. It expires in 10 minutes.</span></p>
+      <p class="text-center"><b>Enter your login code</b><br><span class="muted">We emailed a 6-digit code{% if otp_identifier %} for <b>{{ otp_identifier }}</b>{% endif %}. It expires in 10 minutes.</span></p>
       <form method="post" action="{{ url_for('login_otp_verify') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="identifier" value="{{ otp_identifier }}">
         <label>Login code</label>
         <input type="text" name="code" placeholder="123456" required maxlength="6" inputmode="numeric" autocomplete="one-time-code">
-        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Verify &amp; Sign In</button></div>
+        <div class="mt-16"><button class="btn w-full" type="submit">Verify &amp; Sign In</button></div>
       </form>
-      <p style="text-align:center;margin-top:10px"><a href="{{ url_for('login_otp') }}">Request a new code</a> · <a href="{{ url_for('login') }}">Back to password sign in</a></p>
+      <p class="text-center mt-10"><a href="{{ url_for('login_otp') }}">Request a new code</a> · <a href="{{ url_for('login') }}">Back to password sign in</a></p>
     </div>
     {% elif signup_verify %}
     <div id="pane-signup-verify">
-      <p style="text-align:center"><b>Verify your email</b><br><span class="muted">We emailed a 6-digit code{% if signup_email %} to <b>{{ signup_email }}</b>{% endif %}. It expires in 10 minutes.</span></p>
+      <p class="text-center"><b>Verify your email</b><br><span class="muted">We emailed a 6-digit code{% if signup_email %} to <b>{{ signup_email }}</b>{% endif %}. It expires in 10 minutes.</span></p>
       <form method="post" action="{{ url_for('signup_verify') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="email" value="{{ signup_email }}">
         <label>Verification code</label>
         <input type="text" name="code" placeholder="123456" required maxlength="6" inputmode="numeric" autocomplete="one-time-code">
-        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Verify &amp; Create Account</button></div>
+        <div class="mt-16"><button class="btn w-full" type="submit">Verify &amp; Create Account</button></div>
       </form>
-      <form method="post" action="{{ url_for('signup_verify_resend') }}" style="margin-top:10px">
+      <form method="post" action="{{ url_for('signup_verify_resend') }}" class="mt-10">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="email" value="{{ signup_email }}">
-        <div style="text-align:center"><button class="btn secondary" type="submit">Send a new code</button></div>
+        <div class="text-center"><button class="btn secondary" type="submit">Send a new code</button></div>
       </form>
-      <p style="text-align:center;margin-top:10px"><a href="{{ url_for('login') }}">Back to sign up</a></p>
+      <p class="text-center mt-10"><a href="{{ url_for('login') }}">Back to sign up</a></p>
     </div>
     {% else %}
     <div class="tabs">
-      <button id="tab-login" class="active" onclick="showTab('login')">Log In</button>
-      <button id="tab-signup" onclick="showTab('signup')">Sign Up</button>
+      <button id="tab-login" class="active" data-tab="login" type="button">Log In</button>
+      <button id="tab-signup" data-tab="signup" type="button">Sign Up</button>
     </div>
     <div id="pane-login">
       <form method="post" action="{{ url_for('login') }}">
@@ -72,13 +72,13 @@
         <input type="text" name="identifier" placeholder="Username or email" required>
         <label>Password</label>
         <input type="password" name="password" placeholder="Your password" required>
-        <label class="checkbox" style="margin-top:12px"><input type="checkbox" name="remember" value="1" checked> Remember me</label>
-        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Sign In</button></div>
+        <label class="checkbox mt-12"><input type="checkbox" name="remember" value="1" checked> Remember me</label>
+        <div class="mt-16"><button class="btn w-full" type="submit">Sign In</button></div>
       </form>
-      <p style="text-align:center;margin-top:10px"><a href="{{ url_for('carrier_search') }}">Search a carrier — no login needed</a></p>
-      <p style="text-align:center;margin-top:10px"><a href="{{ url_for('login_otp') }}">Sign in with an email code instead</a></p>
+      <p class="text-center mt-10"><a href="{{ url_for('carrier_search') }}">Search a carrier — no login needed</a></p>
+      <p class="text-center mt-10"><a href="{{ url_for('login_otp') }}">Sign in with an email code instead</a></p>
     </div>
-    <div id="pane-signup" style="display:none">
+    <div id="pane-signup" class="hidden">
       <form method="post" action="{{ url_for('login') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="form" value="signup">
@@ -88,21 +88,14 @@
         <input type="text" name="username" placeholder="Pick a username" required>
         <label>Password</label>
         <input type="password" name="password" placeholder="At least 8 characters" required minlength="8">
-        <label class="checkbox" style="margin-top:12px"><input type="checkbox" name="remember" value="1" checked> Remember me</label>
-        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Create Account</button></div>
+        <label class="checkbox mt-12"><input type="checkbox" name="remember" value="1" checked> Remember me</label>
+        <div class="mt-16"><button class="btn w-full" type="submit">Create Account</button></div>
       </form>
-      <p class="muted" style="text-align:center;margin-top:12px">We will email a 6-digit code to verify your email before your account is created.</p>
-      <p class="muted" style="text-align:center;margin-top:12px">Signing up starts a $0 7-day trial with full access. Ask owner for access to lifetime feature. Contact the owner: {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a> · zackalbert.dispatch@gmail.com.</p>
+      <p class="muted text-center mt-12">We will email a 6-digit code to verify your email before your account is created.</p>
+      <p class="muted text-center mt-12">Signing up starts a $0 7-day trial with full access. Ask owner for access to lifetime feature. Contact the owner: {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a> · zackalbert.dispatch@gmail.com.</p>
     </div>
     {% endif %}
   </div>
 </div>
-<script>
-function showTab(which) {
-  document.getElementById('pane-login').style.display = which === 'login' ? '' : 'none';
-  document.getElementById('pane-signup').style.display = which === 'signup' ? '' : 'none';
-  document.getElementById('tab-login').className = which === 'login' ? 'active' : '';
-  document.getElementById('tab-signup').className = which === 'signup' ? 'active' : '';
-}
-</script>
+<script src="{{ url_for('static', filename='login.js') }}"></script>
 {% endblock %}

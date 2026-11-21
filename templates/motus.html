@@ -10,20 +10,21 @@
   <div class="step"><b class="num">3</b> Open the Qualified page to call them</div>
 </div></div>
 
+<div id="motus-config" data-status-url="{{ url_for('api_motus_status') }}?kind={{ kind }}" data-stop-url="{{ url_for('api_motus_stop') }}" hidden></div>
 <div class="card">
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Paste USDOT numbers — one per line, or comma / space separated</label>
     <textarea name="usdots" rows="6" placeholder="4218222&#10;4236233&#10;..."></textarea>
     <div class="field-hint">Tip: most brand-new applications will still be pending / not authorised — that is normal.</div>
-    <div style="margin-top:14px">
+    <div class="mt-14">
       <button class="btn" type="submit" {% if running %}disabled{% endif %}>Search</button>
-      <button class="btn secondary" type="button" onclick="stopMotus()" {% if not running %}disabled{% endif %}>Stop</button>
+      <button class="btn secondary" type="button" id="btn-stop-motus" {% if not running %}disabled{% endif %}>Stop</button>
     </div>
   </form>
 </div>
 
-<div class="grid cols-4" style="margin-bottom:18px">
+<div class="grid cols-4 mb-18">
   <div class="stat"><div class="label">Checked</div><div class="value" id="m-checked">0</div><div class="hint">numbers looked up so far</div></div>
   <div class="stat"><div class="label">Qualified</div><div class="value green" id="m-qualified">0</div><div class="hint">good ones, ready to call</div></div>
   <div class="stat"><div class="label">Errors</div><div class="value red" id="m-errors">0</div><div class="hint">checks that failed</div></div>
@@ -58,28 +59,5 @@
   </table></div>
 </div>
 
-<script>
-function esc(v){ return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-function pill(status){
-  if (status === 'Qualified') return '<span class="pill green">Qualified</span>';
-  if (status === 'Not Found') return '<span class="pill red">Not Found</span>';
-  if (status === 'Error') return '<span class="pill red">Error</span>';
-  return '<span class="pill yellow">' + esc(status) + '</span>';
-}
-async function poll(){
-  try {
-    const r = await fetch('{{ url_for("api_motus_status") }}?kind={{ kind }}');
-    const d = await r.json();
-    document.getElementById('m-checked').textContent = d.checked + ' / ' + d.total;
-    document.getElementById('m-qualified').textContent = d.qualified;
-    document.getElementById('m-errors').textContent = d.errors;
-    document.getElementById('m-status').textContent = d.running ? 'Running…' : (d.status || 'Idle');
-    document.getElementById('log-body').innerHTML = d.recent_log.map(x =>
-      '<tr><td>' + esc(x.mc_number) + '</td><td>' + pill(x.status) + '</td><td>' + esc(x.entity) + '</td><td>' + esc(x.power_units) + '</td><td>' + esc(x.cargo) + '</td><td>' + esc(x.checked_at) + '</td><td>' + esc(x.note) + '</td></tr>').join('');
-  } catch(e) {}
-  setTimeout(poll, 1500);
-}
-async function stopMotus(){ await fetch('{{ url_for("api_motus_stop") }}', {method:'POST', headers:{'X-CSRF-Token': csrfToken()}}); }
-poll();
-</script>
+<script src="{{ url_for('static', filename='motus.js') }}"></script>
 {% endblock %}

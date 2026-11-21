@@ -26,8 +26,8 @@
 </div>
 
 <div class="card">
-  <form id="scan-form" onsubmit="return startScan(event)">
-    <div class="form-row fleet-row" style="margin-bottom:12px">
+  <form id="scan-form" data-api-status="{{ url_for('api_status') }}" data-api-start="{{ url_for('api_start_scan') }}" data-api-resume="{{ url_for('api_resume_scan') }}" data-api-stop="{{ url_for('api_stop_scan') }}" data-qualified-url="{{ url_for('qualified') }}">
+    <div class="form-row fleet-row mb-12">
       <div class="fleet-box"><label>Fleet size — Min power units</label><input type="number" id="min_pu" name="min_pu" min="0" placeholder="No min"></div>
       <div class="fleet-box"><label>Fleet size — Max power units</label><input type="number" id="max_pu" name="max_pu" min="0" placeholder="No max"></div>
       <div class="fleet-hint"><label>&nbsp;</label><span class="muted">Only carriers with this many power units qualify — leave blank for no limit.</span></div>
@@ -36,26 +36,26 @@
       <div><label>Start MC — first number in the range</label><input type="number" id="start_mc" name="start_mc" placeholder="e.g. 1630000"></div>
       <div><label>End MC — last number in the range</label><input type="number" id="end_mc" name="end_mc" placeholder="e.g. 1630100"></div>
       <div><label>Commodity filter — only show carriers that haul this</label>
-        <select id="commodity" onchange="applyCommodity(this.value)">
+        <select id="commodity">
           <option value="">Select All</option>
           {% for c in commodities %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
         </select>
       </div>
       <div><button class="btn" id="btn-start" type="submit">Start Scanning</button></div>
-      <div><button class="btn" id="btn-resume" type="button" onclick="resumeScan()" style="display:none">Resume Scan</button></div>
-      <div><button class="btn secondary" id="btn-stop" type="button" onclick="stopScan()" disabled>Stop</button></div>
+      <div><button class="btn hidden" id="btn-resume" type="button">Resume Scan</button></div>
+      <div><button class="btn secondary" id="btn-stop" type="button" disabled>Stop</button></div>
       <div><a class="btn secondary" href="{{ url_for('api_scan_csv') }}">Download CSV ({{ scan_csv_count }} carriers)</a></div>
     </div>
-    <p class="muted" id="commodity-note" style="display:none"></p>
-    <p class="notice" id="scan-message" style="display:none"></p>
+    <p class="muted hidden" id="commodity-note"></p>
+    <p class="notice hidden" id="scan-message"></p>
   </form>
-  <div style="margin-top:14px">
-    <div class="progress"><div id="bar" style="width:0%"></div></div>
+  <div class="mt-14">
+    <div class="progress"><div id="bar"></div></div>
     <p class="muted" id="progress-text">Idle — no scan running.</p>
   </div>
 </div>
 
-<div class="grid cols-7" style="margin-bottom:18px">
+<div class="grid cols-7 mb-18">
   <div class="stat"><div class="label">Checked</div><div class="value" id="st-checked">0</div></div>
   <div class="stat"><div class="label">Qualified</div><div class="value green" id="st-qualified">0</div></div>
   <div class="stat"><div class="label">Errors</div><div class="value red" id="st-errors">0</div></div>
@@ -64,7 +64,7 @@
   <div class="stat"><div class="label">Time Left</div><div class="value" id="st-eta">--:--</div></div>
   <div class="stat"><div class="label">Speed</div><div class="value orange" id="st-speed">0/min</div></div>
 </div>
-<p class="muted" style="margin:-6px 0 18px">Qualified = authorised carriers with matching cargo — these are the ones to call. Not Found = no SAFER record for that MC. Errors = the check failed, try again later.</p>
+<p class="muted legend-note">Qualified = authorised carriers with matching cargo — these are the ones to call. Not Found = no SAFER record for that MC. Errors = the check failed, try again later.</p>
 
 <div class="card">
   <h2>Live Log — Showing latest 25</h2>
@@ -91,145 +91,5 @@
 </div>
 <script src="{{ url_for('static', filename='pickup_line.js') }}"></script>
 
-<script>
-function fmt(s){ s = Math.max(0, Math.floor(s||0)); return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0'); }
-function esc(v){ return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-function pill(status){
-  if (status === 'Qualified') return '<span class="pill green">Qualified</span>';
-  if (status === 'Not Found') return '<span class="pill red">Not Found</span>';
-  if (status === 'Error') return '<span class="pill red">Error</span>';
-  return '<span class="pill yellow">' + esc(status) + '</span>';
-}
-async function poll(){
-  try {
-    const r = await fetch('{{ url_for("api_status") }}');
-    const ct = r.headers.get('content-type') || '';
-    if (r.status === 403 || !ct.includes('application/json')) {
-      // Audit fix 7: a 403 page (or a login-page redirect, which is
-      // HTML) used to throw inside r.json() and fail silently. Show
-      // the message instead, and keep polling.
-      showScanMessage('Session expired — reload the page and try again.');
-    } else {
-    const d = await r.json();
-    document.getElementById('st-checked').textContent = d.current + (d.total ? ' / ' + d.total : '');
-    document.getElementById('st-qualified').textContent = d.results_count;
-    document.getElementById('st-errors').textContent = d.error_count;
-    document.getElementById('st-notfound').textContent = d.not_found_count;
-    document.getElementById('st-elapsed').textContent = fmt(d.elapsed_seconds);
-    document.getElementById('st-eta').textContent = d.running ? fmt(d.eta_seconds) : '--:--';
-    document.getElementById('st-speed').textContent = d.rate_per_min + '/min';
-    const pct = d.total ? Math.round(d.current / d.total * 100) : 0;
-    document.getElementById('bar').style.width = pct + '%';
-    if (d.status === 'Paused' || d.status === 'Stopped') {
-      document.getElementById('progress-text').textContent = d.status + ' — scan MC-' + d.start_mc + ' → MC-' + d.end_mc + ' stopped at ' + d.current + ' checked, ' + d.results_count + ' qualified. It will not start on its own — press Resume Scan to continue.';
-    } else {
-      document.getElementById('progress-text').textContent = d.running
-        ? pct + '% — Scanning MC-' + d.start_mc + ' → MC-' + d.end_mc + ' (' + d.status + ')'
-        : (d.total ? 'Last scan: ' + d.status + ' — ' + d.current + ' checked, ' + d.results_count + ' qualified.' : 'Idle — no scan running.');
-    }
-    document.getElementById('btn-start').disabled = d.running;
-    document.getElementById('btn-stop').disabled = !d.running;
-    document.getElementById('btn-resume').style.display = d.can_resume ? '' : 'none';
-    const body = document.getElementById('log-body');
-    body.innerHTML = d.recent_log.map(x =>
-      '<tr><td>' + esc(x.mc_number) + '</td><td>' + pill(x.status) + '</td><td>' + esc(x.entity) + '</td><td>' + esc(x.power_units) + '</td><td>' + esc(x.cargo) + '</td><td>' + esc(x.checked_at) + '</td><td>' + esc(x.note) + '</td></tr>').join('');
-    }
-  } catch(e) {}
-  setTimeout(poll, 1500);
-}
-function showScanMessage(msg){
-  const el = document.getElementById('scan-message');
-  el.textContent = msg;
-  el.style.display = '';
-}
-async function startScan(ev){
-  ev.preventDefault();
-  const s = document.getElementById('start_mc').value.trim();
-  const e = document.getElementById('end_mc').value.trim();
-  if (!s || !e) {
-    showScanMessage('Enter the MC numbers first — type the Start MC and End MC, then press Start Scanning.');
-    return false;
-  }
-  document.getElementById('scan-message').style.display = 'none';
-  const fd = new FormData();
-  fd.append('csrf_token', csrfToken());
-  fd.append('start_mc', s);
-  fd.append('end_mc', e);
-  const minPu = document.getElementById('min_pu').value.trim();
-  const maxPu = document.getElementById('max_pu').value.trim();
-  if (minPu) fd.append('min_pu', minPu);
-  if (maxPu) fd.append('max_pu', maxPu);
-  const commodity = document.getElementById('commodity').value;
-  if (commodity) fd.append('commodity', commodity);
-  // Audit fix 7: check the response before parsing JSON — a 403 page
-  // (or a login redirect) is HTML, and r.json() on it used to throw
-  // silently so the button just did nothing.
-  let r;
-  try {
-    r = await fetch('{{ url_for("api_start_scan") }}', {method:'POST', body: fd});
-  } catch(e) {
-    showScanMessage('Could not start scan — check your connection and try again.');
-    return false;
-  }
-  if (r.status === 403 || !(r.headers.get('content-type') || '').includes('application/json')) {
-    // A 403 from the API carries a JSON error (e.g. the Demo 10,000-MC
-    // cap) — show the server's message, not a generic session error.
-    // Only fall back to "Session expired" when there is no JSON error.
-    let d = null;
-    try { d = await r.clone().json(); } catch(e) {}
-    showScanMessage((d && d.error) || 'Session expired — reload the page and try again.');
-    return false;
-  }
-  let d;
-  try { d = await r.json(); } catch(e) { showScanMessage('Could not start scan. Please reload the page and try again.'); return false; }
-  if (!d.ok) showScanMessage(d.error || 'Could not start scan.');
-  return false;
-}
-async function resumeScan(){
-  let r;
-  try {
-    r = await fetch('{{ url_for("api_resume_scan") }}', {method:'POST', headers:{'X-CSRF-Token': csrfToken()}});
-  } catch(e) {
-    showScanMessage('Could not resume scan — check your connection and try again.');
-    return;
-  }
-  if (r.status === 403 || !(r.headers.get('content-type') || '').includes('application/json')) {
-    let d = null;
-    try { d = await r.clone().json(); } catch(e) {}
-    showScanMessage((d && d.error) || 'Session expired — reload the page and try again.');
-    return;
-  }
-  let d;
-  try { d = await r.json(); } catch(e) { showScanMessage('Could not resume scan. Please reload the page and try again.'); return; }
-  if (!d.ok) showScanMessage(d.error || 'Could not resume scan.');
-  else showScanMessage('Scan resumed from MC-' + d.resumed_from + '.');
-}
-async function stopScan(){
-  try {
-    const r = await fetch('{{ url_for("api_stop_scan") }}', {method:'POST', headers:{'X-CSRF-Token': csrfToken()}});
-    if (r.status === 403) {
-      let d = null;
-      try { d = await r.clone().json(); } catch(e) {}
-      showScanMessage((d && d.error) || 'Session expired — reload the page and try again.');
-    }
-  } catch(e) {}
-}
-function applyCommodity(v){
-  const note = document.getElementById('commodity-note');
-  if (!v) { note.style.display = 'none'; return; }
-  note.style.display = '';
-  note.textContent = '';
-  note.appendChild(document.createTextNode('Commodity '));
-  const b = document.createElement('b'); b.textContent = v; note.appendChild(b);
-  note.appendChild(document.createTextNode(' selected — the scan will only qualify carriers that haul '));
-  const b2 = document.createElement('b'); b2.textContent = v; note.appendChild(b2);
-  note.appendChild(document.createTextNode('. After the scan, open '));
-  const a = document.createElement('a');
-  a.href = '{{ url_for("qualified") }}?commodity=' + encodeURIComponent(v);
-  a.textContent = 'Qualified Carriers';
-  note.appendChild(a);
-  note.appendChild(document.createTextNode(' filtered by ' + v + ' to see matching MCs.'));
-}
-poll();
-</script>
+<script src="{{ url_for('static', filename='dashboard.js') }}"></script>
 {% endblock %}

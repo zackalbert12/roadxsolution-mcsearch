@@ -18,19 +18,19 @@
         <option {% if edit_note and edit_note.priority=='Low' %}selected{% endif %}>Low</option><option {% if not edit_note or edit_note.priority=='Normal' %}selected{% endif %}>Normal</option><option {% if edit_note and edit_note.priority=='High' %}selected{% endif %}>High</option><option {% if edit_note and edit_note.priority=='Urgent' %}selected{% endif %}>Urgent</option>
       </select>
       <label>Reminder Date — when should you look at this again?</label><input type="date" name="reminder_date" value="{{ edit_note.reminder_date or '' }}">
-      <div style="margin-top:16px"><button class="btn" type="submit">{% if edit_note %}Save Changes{% else %}Save Note{% endif %}</button>{% if edit_note %} <a class="btn secondary" href="{{ url_for('notes') }}">Cancel</a>{% endif %}</div>
+      <div class="mt-16"><button class="btn" type="submit">{% if edit_note %}Save Changes{% else %}Save Note{% endif %}</button>{% if edit_note %} <a class="btn secondary" href="{{ url_for('notes') }}">Cancel</a>{% endif %}</div>
     </form>
   </div>
   <div class="card">
     <h2>All Notes ({{ rows|length }})</h2>
     {% for n in rows %}
-      <div style="border-bottom:1px solid #f3f4f6;padding:10px 0">
+      <div class="row-divider">
         <b>{{ n.title or 'Note' }}</b>
         {% if n.mc_number %}<span class="pill orange">MC-{{ n.mc_number }}</span>{% endif %}
         <span class="pill {% if n.priority=='Urgent' %}red{% elif n.priority=='High' %}yellow{% else %}grey{% endif %}">{{ n.priority }}</span>
         <p>{{ n.text }}</p>
         <div class="muted">{{ n.tags }}{% if n.reminder_date %} · Reminder: {{ n.reminder_date }}{% endif %} · {{ n.created_at }}</div>
-        <form method="post" action="{{ url_for('delete_note', nid=n.id) }}" style="margin-top:6px">
+        <form method="post" action="{{ url_for('delete_note', nid=n.id) }}" class="mt-6">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <a class="btn secondary small" href="{{ url_for('edit_note', nid=n.id) }}">Edit</a>
           <button class="btn secondary small" type="submit">Delete</button>

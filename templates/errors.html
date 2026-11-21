@@ -4,7 +4,7 @@
 <div class="hero"><h1>Error MCs</h1>
 <p>These MCs could not be checked — usually the internet dropped, or SAFER was busy. Press Retry to check them again.</p>
 {% if rows %}
-<form method="post" action="{{ url_for('clear_errors') }}" onsubmit="return confirm('Clear all {{ total }} error MCs?');">
+<form method="post" action="{{ url_for('clear_errors') }}" data-confirm="Clear all {{ total }} error MCs?">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <button class="btn secondary" type="submit">Clear all ({{ total }})</button>
 </form>

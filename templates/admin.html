@@ -18,7 +18,7 @@
   {% elif totp_pending %}
     <p><b>Setup started.</b> Add this account to your authenticator app (Google Authenticator, Authy, or similar) — type the secret in by hand, or paste the setup link:</p>
     <p>Secret: <code>{{ totp_pending }}</code></p>
-    <p>Setup link: <code style="word-break:break-all">{{ totp_uri }}</code></p>
+    <p>Setup link: <code class="break-all">{{ totp_uri }}</code></p>
     <form method="post" action="{{ url_for('admin_2fa_confirm') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="form-row">
@@ -26,7 +26,7 @@
         <div><button class="btn" type="submit">Confirm &amp; Enable 2FA</button></div>
       </div>
     </form>
-    <form method="post" action="{{ url_for('admin_2fa_cancel') }}" style="margin-top:8px">
+    <form method="post" action="{{ url_for('admin_2fa_cancel') }}" class="mt-8">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="btn small" type="submit">Cancel setup</button>
     </form>
@@ -68,10 +68,10 @@
         <td>{{ u.access_ends }}</td>
         <td>{{ u.created_at }}</td><td>{{ u.last_login or '—' }}</td><td>{{ u.login_count }}</td>
         <td>
-          <form method="post" action="{{ url_for('admin_set_password') }}" style="display:flex;gap:6px">
+          <form method="post" action="{{ url_for('admin_set_password') }}" class="flex-gap-6">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="user_id" value="{{ u.id }}">
-            <input type="password" name="new_password" placeholder="New password" style="width:130px;padding:6px">
+            <input type="password" name="new_password" placeholder="New password" class="input-narrow">
             <button class="btn small" type="submit">Set</button>
           </form>
         </td>
@@ -92,7 +92,7 @@
         </td>
         <td>
           {% if not u.is_admin %}
-          <form method="post" action="{{ url_for('admin_block_user') if not u.blocked else url_for('admin_unblock_user') }}" style="display:flex;gap:6px;align-items:center">
+          <form method="post" action="{{ url_for('admin_block_user') if not u.blocked else url_for('admin_unblock_user') }}" class="flex-gap-6-center">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="user_id" value="{{ u.id }}">
             {% if u.blocked %}
@@ -175,35 +175,14 @@
       <label class="duration-choice"><input type="radio" name="duration" value="1month"> 1 month — 30 days</label>
       <label class="duration-choice"><input type="radio" name="duration" value="6months"> 6 months — 180 days</label>
       <label class="duration-choice"><input type="radio" name="duration" value="1year"> 1 year — 365 days</label>
-      <label class="duration-choice"><input type="radio" name="duration" value="custom"> Custom — <input type="number" name="custom_months" step="0.1" min="0.1" max="120" placeholder="months, e.g. 1.5" style="width:130px;padding:6px"> <span class="muted">(1 month = 30 days, so 1.5 months = 45 days)</span></label>
+      <label class="duration-choice"><input type="radio" name="duration" value="custom"> Custom — <input type="number" name="custom_months" step="0.1" min="0.1" max="120" placeholder="months, e.g. 1.5" class="input-narrow"> <span class="muted">(1 month = 30 days, so 1.5 months = 45 days)</span></label>
       <label class="duration-choice"><input type="radio" name="duration" value="lifetime"> Lifetime — never expires</label>
-      <div style="display:flex;gap:8px;margin-top:14px">
+      <div class="flex-gap-8 mt-14">
         <button class="btn" type="submit">Set Access</button>
-        <button class="btn" type="button" onclick="closeAccessModal()">Cancel</button>
+        <button class="btn" type="button" id="access-cancel">Cancel</button>
       </div>
     </form>
   </div>
 </div>
-<script>
-// Access buttons pass their values via data-* attributes (Jinja autoescape
-// makes them safe in attributes) instead of an inline onclick handler,
-// whose double-quoted JSON strings truncated the attribute and broke the popup.
-document.querySelectorAll('.access-btn').forEach(function (btn) {
-  btn.addEventListener('click', function () {
-    openAccessModal(btn.dataset.userId, btn.dataset.username, btn.dataset.plan, btn.dataset.accessEnds);
-  });
-});
-function openAccessModal(uid, username, plan, ends) {
-  document.getElementById('access-user-id').value = uid;
-  document.getElementById('access-username').textContent = username;
-  document.getElementById('access-current').textContent = plan + ' — ends ' + ends;
-  document.getElementById('access-modal').classList.add('open');
-}
-function closeAccessModal() {
-  document.getElementById('access-modal').classList.remove('open');
-}
-document.getElementById('access-modal').addEventListener('click', function (e) {
-  if (e.target === this) closeAccessModal();
-});
-</script>
+<script src="{{ url_for('static', filename='admin.js') }}"></script>
 {% endblock %}

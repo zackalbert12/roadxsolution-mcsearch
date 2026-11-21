@@ -868,8 +868,8 @@ def _security_headers(resp):
                             "max-age=31536000; includeSubDomains")
     resp.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "default-src 'self'; script-src 'self'; "
+        "style-src 'self'; img-src 'self' data:; "
         "font-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
         "form-action 'self'")
     # Static assets: a short max-age (filenames are not hashed, so a

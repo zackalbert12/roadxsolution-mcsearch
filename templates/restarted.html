@@ -11,10 +11,10 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b></td>
-      <td>{% if r.carrier %}<b><button class="phone-copy" data-copy="{{ r.carrier.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.carrier.legal_name }}</button></b>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" title="Tap to copy">MC-{{ r.mc_number }}</button></b></td>
+      <td>{% if r.carrier %}<b><button class="phone-copy" data-copy="{{ r.carrier.legal_name }}" title="Tap to copy">{{ r.carrier.legal_name }}</button></b>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td>{{ r.carrier.state if r.carrier }}</td>
-      <td>{% if r.carrier and r.carrier.phone %}<button class="phone-copy" data-phone="{{ r.carrier.phone }}" onclick="copyPhone(this)"" title="Tap to copy">{{ r.carrier.phone }}</button>{% else %}—{% endif %}</td>
+      <td>{% if r.carrier and r.carrier.phone %}<button class="phone-copy" data-phone="{{ r.carrier.phone }}" title="Tap to copy">{{ r.carrier.phone }}</button>{% else %}—{% endif %}</td>
       <td>{{ r.carrier.power_units if r.carrier }}</td>
       <td>{% if r.carrier %}{% for c in r.carrier.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}{% endif %}</td>
       <td>{% for h in r.history %}<div class="muted">{{ h }}</div>{% endfor %}</td>
@@ -33,21 +33,5 @@
 </div>
 {% endif %}
 </div>
-<script>
-async function copyPhone(btn){
-  const phone = btn.getAttribute('data-phone');
-  if(!phone) return;
-  try { await navigator.clipboard.writeText(phone); }
-  catch(e){
-    const t = document.createElement('textarea');
-    t.value = phone; document.body.appendChild(t); t.select();
-    try { document.execCommand('copy'); } catch(_){}
-    t.remove();
-  }
-  btn.classList.add('copied');
-  const old = btn.textContent;
-  btn.textContent = 'Copied ✓';
-  setTimeout(function(){ btn.textContent = old; btn.classList.remove('copied'); }, 1200);
-}
-</script>
+
 {% endblock %}
