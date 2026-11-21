@@ -653,7 +653,10 @@ def _refuse_blocked_users():
         return None
     if not session.get("user_id"):
         return None
-    user = current_user()
+    # Check the blocked flag BEFORE the session-version comparison:
+    # blocking bumps session_version, so current_user() returns None
+    # for this session and the flash below would never survive.
+    user = _user_row_by_id(session.get("user_id"))
     if not user or not _is_blocked(user):
         return None
     session.clear()
@@ -831,6 +834,21 @@ def _login_user(user, remember):
     session["user_id"] = user["id"]
     session["sv"] = user["session_version"]
     session.permanent = bool(remember)
+
+
+def _user_row_by_id(uid):
+    """User row by id WITHOUT the session-version check in
+    current_user(). Needed by the blocked-user guard: blocking bumps
+    session_version, so current_user() returns None for a blocked
+    user's live session before the blocked check can run — the user
+    would land on a plain login page with no explanation."""
+    if not uid:
+        return None
+    conn = store.connect()
+    try:
+        return conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    finally:
+        conn.close()
 
 
 def current_user():
