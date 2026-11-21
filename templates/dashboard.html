@@ -159,6 +159,8 @@ async function startScan(ev){
   const maxPu = document.getElementById('max_pu').value.trim();
   if (minPu) fd.append('min_pu', minPu);
   if (maxPu) fd.append('max_pu', maxPu);
+  const commodity = document.getElementById('commodity').value;
+  if (commodity) fd.append('commodity', commodity);
   // Audit fix 7: check the response before parsing JSON — a 403 page
   // (or a login redirect) is HTML, and r.json() on it used to throw
   // silently so the button just did nothing.
@@ -204,7 +206,9 @@ function applyCommodity(v){
   note.textContent = '';
   note.appendChild(document.createTextNode('Commodity '));
   const b = document.createElement('b'); b.textContent = v; note.appendChild(b);
-  note.appendChild(document.createTextNode(' selected — after the scan, open '));
+  note.appendChild(document.createTextNode(' selected — the scan will only qualify carriers that haul '));
+  const b2 = document.createElement('b'); b2.textContent = v; note.appendChild(b2);
+  note.appendChild(document.createTextNode('. After the scan, open '));
   const a = document.createElement('a');
   a.href = '{{ url_for("qualified") }}?commodity=' + encodeURIComponent(v);
   a.textContent = 'Qualified Carriers';

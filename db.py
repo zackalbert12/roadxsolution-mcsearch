@@ -291,6 +291,11 @@ def init_db():
             conn.execute("ALTER TABLE scans ADD COLUMN min_pu INTEGER")
         if "max_pu" not in scan_cols:
             conn.execute("ALTER TABLE scans ADD COLUMN max_pu INTEGER")
+        # Migration for the scan-time Commodity filter: the commodity
+        # the user picked on the Dashboard scan form, stored on the
+        # scan so a resume reuses the same filter. NULL/'' = no filter.
+        if "commodity" not in scan_cols:
+            conn.execute("ALTER TABLE scans ADD COLUMN commodity TEXT")
         conn.commit()
     finally:
         conn.close()

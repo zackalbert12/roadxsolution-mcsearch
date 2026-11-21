@@ -40,6 +40,7 @@ import db as store
 from safer import check_mc, check_usdot, search_by_name, fetch_company_officer
 from commodity import (COMMODITIES, EQUIPMENT_COMMODITIES, commodity_names,
                         equipment_label, expected_trucks,
+                        carrier_matches_commodity,
                         filter_carriers_by_commodity)
 from pickup_lines import PICKUP_LINES, CATEGORIES, lines_for
 
@@ -1064,7 +1065,7 @@ def _count_scan_write_error(user_id, scan_db_id, scan_id, rec):
 
 
 def run_scan(user_id, scan_db_id, scan_id, start_mc, end_mc, cargo_types,
-             fleet=(None, None)):
+             fleet=(None, None), commodity=None):
     """Background thread: walk an MC range, checking each against SAFER.
 
     Checks run in parallel (ROAD_SCAN_WORKERS threads, default 5) with
@@ -1074,7 +1075,9 @@ def run_scan(user_id, scan_db_id, scan_id, start_mc, end_mc, cargo_types,
     fleet=(min_pu, max_pu) is the scan-time Fleet Size filter from the
     Dashboard scan form: a carrier only qualifies when its power units
     sit inside the range (None = no limit on that side).
-    """
+    commodity is the scan-time Commodity filter: a carrier only
+    qualifies when its SAFER cargo hauls that commodity (None/'' =
+    no filter)."""
     stop = RUNNING_SCANS[user_id]["stop"]
     started = time.time()
     try:
@@ -1098,6 +1101,16 @@ def run_scan(user_id, scan_db_id, scan_id, start_mc, end_mc, cargo_types,
                             f.cancel()
                         break
                     rec = fut.result()
+                    if rec.get("qualified"):
+                        # Scan-time Commodity filter: an otherwise
+                        # qualified carrier whose SAFER cargo does not
+                        # haul the selected commodity is skipped, not
+                        # qualified.
+                        if commodity and not carrier_matches_commodity(
+                                rec.get("cargo_carried") or [], commodity):
+                            rec["qualified"] = False
+                            rec["status"] = "Skip — Cargo mismatch"
+                            rec["note"] = ("Does not haul %s" % commodity)
                     if rec.get("qualified"):
                         # Scan-time Fleet Size filter: an otherwise
                         # qualified carrier outside the set power-units
@@ -2412,14 +2425,20 @@ def api_start_scan():
     # no limit on that side); stored on the scan so a resume reuses it.
     min_pu = _parse_pu(request.form.get("min_pu") or body.get("min_pu"))
     max_pu = _parse_pu(request.form.get("max_pu") or body.get("max_pu"))
+    # Scan-time Commodity filter (empty / "Select All" = no filter);
+    # unknown names are ignored, never stored. Stored on the scan so a
+    # resume reuses the same filter.
+    commodity = (request.form.get("commodity") or body.get("commodity") or "").strip()
+    if commodity not in COMMODITIES:
+        commodity = ""
     scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     conn = store.connect()
     try:
         cur = conn.execute(
             "INSERT INTO scans (user_id, scan_id, start_mc, end_mc, total,"
-            " started_at, min_pu, max_pu) VALUES (?,?,?,?,?,?,?,?)",
+            " started_at, min_pu, max_pu, commodity) VALUES (?,?,?,?,?,?,?,?,?)",
             (user["id"], scan_id, start_mc, end_mc, end_mc - start_mc + 1,
-             now_str(), min_pu, max_pu))
+             now_str(), min_pu, max_pu, commodity or None))
         conn.commit()
         scan_db_id = cur.lastrowid
     finally:
@@ -2428,6 +2447,7 @@ def api_start_scan():
     t = threading.Thread(target=run_scan,
                          args=(user["id"], scan_db_id, scan_id, start_mc,
                                end_mc, cargo_types, (min_pu, max_pu)),
+                         kwargs={"commodity": commodity or None},
                          daemon=True)
     RUNNING_SCANS[user["id"]] = {"stop": stop, "thread": t}
     t.start()
@@ -2480,8 +2500,10 @@ def api_resume_scan():
                         "error": "That scan already finished."}), 400
     settings = get_settings(user["id"])
     cargo_types = selected_cargo(settings)
-    # The paused scan keeps the Fleet Size range it started with.
+    # The paused scan keeps the Fleet Size range and the Commodity
+    # filter it started with.
     fleet = (scan.get("min_pu"), scan.get("max_pu"))
+    commodity = scan.get("commodity") or None
     conn = store.connect()
     try:
         conn.execute(
@@ -2496,6 +2518,7 @@ def api_resume_scan():
                          args=(user["id"], scan["id"], scan["scan_id"],
                                resume_from, scan["end_mc"], cargo_types,
                                fleet),
+                         kwargs={"commodity": commodity},
                          daemon=True)
     RUNNING_SCANS[user["id"]] = {"stop": stop, "thread": t}
     t.start()
