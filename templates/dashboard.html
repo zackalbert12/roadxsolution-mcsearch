@@ -120,8 +120,8 @@ async function poll(){
     document.getElementById('st-speed').textContent = d.rate_per_min + '/min';
     const pct = d.total ? Math.round(d.current / d.total * 100) : 0;
     document.getElementById('bar').style.width = pct + '%';
-    if (d.status === 'Paused') {
-      document.getElementById('progress-text').textContent = 'Paused — scan MC-' + d.start_mc + ' → MC-' + d.end_mc + ' stopped at ' + d.current + ' checked, ' + d.results_count + ' qualified. It will not start on its own — press Resume Scan to continue.';
+    if (d.status === 'Paused' || d.status === 'Stopped') {
+      document.getElementById('progress-text').textContent = d.status + ' — scan MC-' + d.start_mc + ' → MC-' + d.end_mc + ' stopped at ' + d.current + ' checked, ' + d.results_count + ' qualified. It will not start on its own — press Resume Scan to continue.';
     } else {
       document.getElementById('progress-text').textContent = d.running
         ? pct + '% — Scanning MC-' + d.start_mc + ' → MC-' + d.end_mc + ' (' + d.status + ')'

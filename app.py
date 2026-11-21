@@ -2359,7 +2359,7 @@ def api_status():
             "rate_per_min": round(rate, 1),
             "start_mc": scan["start_mc"], "end_mc": scan["end_mc"],
             "status": scan["status"],
-            "can_resume": scan["status"] == "Paused",
+            "can_resume": scan["status"] in ("Paused", "Stopped"),
             "recent_log": [{
                 "mc_number": "MC-%s" % r["mc_number"], "status": r["status"],
                 "entity": r["entity"], "power_units": r["power_units"],
@@ -2448,8 +2448,11 @@ def api_stop_scan():
 @app.route("/api/resume-scan", methods=["POST"])
 @login_required
 def api_resume_scan():
-    """Resume a Paused scan from where it stopped — only when the user
-    presses Resume. A scan never resumes on its own."""
+    """Resume a Paused or Stopped scan from where it stopped — only when
+    the user presses Resume. A scan never resumes on its own. A
+    user-stopped scan keeps status 'Stopped' (it is not a stale
+    leftover, which mark_stale_scans_paused marks 'Paused'), but both
+    are resumable from current_mc."""
     user = current_user()
     if user["id"] in RUNNING_SCANS:
         return jsonify({"ok": False, "error": "A scan is already running."}), 400
@@ -2460,7 +2463,7 @@ def api_resume_scan():
     conn = store.connect()
     try:
         scan = conn.execute(
-            "SELECT * FROM scans WHERE user_id=? AND status='Paused'"
+            "SELECT * FROM scans WHERE user_id=? AND status IN ('Paused', 'Stopped')"
             " ORDER BY id DESC LIMIT 1", (user["id"],)).fetchone()
         if not scan:
             return jsonify({"ok": False,
