@@ -4,7 +4,10 @@ services:
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --workers 2 --threads 4 --timeout 120
+    # NOTE: gunicorn settings live in gunicorn.conf.py (workers=1,
+    # timeout=120). Do NOT add --workers 2 here: scan stop/resume/status
+    # depend on the in-process RUNNING_SCANS dict (see gunicorn.conf.py).
+    startCommand: gunicorn app:app
     envVars:
       - key: SECRET_KEY
         generateValue: true

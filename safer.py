@@ -28,10 +28,60 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
-TIMEOUT = 20
 DELAY = 0.6          # seconds between SAFER requests per worker (plus jitter)
 MAX_RETRIES = 3
 BACKOFF = (5, 15, 30)  # seconds per retry on 429/503/5xx or network error
+
+# --- hard fetch deadlines ------------------------------------------------
+# Render logs (2026-11-21) proved the `requests` timeout does NOT bound
+# the TCP connect / TLS handshake phase when going through a proxy: the
+# single gunicorn worker hung there until Gunicorn killed it after ~30 s
+# (WORKER TIMEOUT -> bare 500, 7 times in 2 hours). So every outbound
+# call ALSO runs in a daemon thread with a hard wall-clock deadline
+# that cannot be bypassed: on expiry the hung thread is abandoned and
+# the attempt fails fast instead of stalling the request.
+# Per-attempt deadline + whole-call budget for SAFER snapshot/name
+# fetches: a single lookup can then take at most ~20 s, and an auto-mode
+# search (USDOT + MC) at most ~40 s — both well under the 120 s
+# gunicorn timeout. Census (owner name) is a single call, capped at 10 s.
+SAFER_CONNECT_TIMEOUT = 5    # requests (connect, read) tuple, first defence
+SAFER_READ_TIMEOUT = 20
+SAFER_ATTEMPT_DEADLINE = 10  # hard seconds per attempt
+SAFER_TOTAL_BUDGET = 20      # hard seconds for one fetch_snapshot/search call
+CENSUS_CONNECT_TIMEOUT = 5
+CENSUS_READ_TIMEOUT = 10
+CENSUS_HARD_DEADLINE = 10    # hard seconds for one officer lookup
+PROXY_LIST_DEADLINE = 10     # hard seconds for the proxy-list fetch
+
+
+def _request_with_deadline(fn, deadline):
+    """Run fn() (a requests.get call) in a daemon thread and wait at most
+    `deadline` seconds. Returns (result, error, timed_out).
+
+    The thread is abandoned on timeout (daemon, so it can never block
+    process exit); the socket op inside it ends on its own when the OS
+    gives up. `error` is the exception fn() raised, or None.
+    """
+    box = {}
+
+    def _run():
+        try:
+            box["result"] = fn()
+        except Exception as exc:  # noqa: BLE001 - returned via box
+            box["error"] = exc
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=deadline)
+    if t.is_alive():
+        return None, None, True
+    if "error" in box:
+        return None, box["error"], False
+    if "result" not in box:
+        # Thread ended without a result (e.g. killed by SystemExit) —
+        # treat it as a failure, never as a success.
+        return None, RuntimeError("request thread ended without a result"), False
+    return box["result"], None, False
 
 # --- proxies -------------------------------------------------------------
 PROXY_LIST_URL = os.environ.get(
@@ -58,18 +108,24 @@ def _load_proxies():
         if _PROXY_POOL["list"] and now - _PROXY_POOL["fetched_at"] < PROXY_CACHE_TTL:
             return list(_PROXY_POOL["list"])
     try:
-        resp = requests.get(PROXY_LIST_URL, timeout=10, headers=HEADERS)
+        # Hard deadline: the proxy-list fetch is also an outbound call
+        # and must never stall the request that triggered it.
+        resp, _err, _timed_out = _request_with_deadline(
+            lambda: requests.get(PROXY_LIST_URL, timeout=(5, 10),
+                                 headers=HEADERS),
+            deadline=PROXY_LIST_DEADLINE)
+        if resp is None or resp.status_code != 200:
+            return []
         proxies = []
-        if resp.status_code == 200:
-            for line in resp.text.splitlines():
-                line = line.strip()
-                if re.match(r"^\d+\.\d+\.\d+\.\d+:\d+$", line):
-                    proxies.append("http://" + line)
+        for line in resp.text.splitlines():
+            line = line.strip()
+            if re.match(r"^\d+\.\d+\.\d+\.\d+:\d+$", line):
+                proxies.append("http://" + line)
         with _PROXY_POOL["lock"]:
             _PROXY_POOL["list"] = proxies
             _PROXY_POOL["fetched_at"] = now
         return proxies
-    except requests.RequestException:
+    except Exception:
         return []
 
 
@@ -263,35 +319,58 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY):
             seen.add(p)
     attempts.append(None)  # direct
     last_err = None
-    for attempt, proxy in enumerate(attempts):
-        try:
-            req_proxies = {"http": proxy, "https": proxy} if proxy else None
-            # Proxy attempts get a short timeout: a dead/blackhole proxy
-            # must not stall the check. Direct attempts keep the full one.
-            resp = requests.get(SAFER_URL, params=params, headers=HEADERS,
-                                timeout=(8 if proxy else TIMEOUT),
-                                proxies=req_proxies)
-            if resp.status_code in (429, 503) or resp.status_code >= 500:
-                # SAFER itself is rate-limiting: wait, then retry.
-                last_err = "HTTP %s from SAFER" % resp.status_code
-                if attempt < len(attempts) - 1:
-                    time.sleep(BACKOFF[min(attempt, len(BACKOFF) - 1)])
-                    continue
-                return _error_record(identifier, last_err), last_err
-            resp.raise_for_status()
-            rec = parse_snapshot(resp.text, identifier)
-            rec["fetch_error"] = False
-            rec["error"] = ""
-            if delay:
-                time.sleep(delay + random.uniform(0, 0.4))
-            return rec, None
-        except requests.RequestException as exc:
-            last_err = "Fetch error: %s" % exc
-            if attempt < len(attempts) - 1:
-                # Dead proxy: rotate immediately, no sleep — the next
-                # proxy is a different IP, so waiting helps nothing.
+    started = time.time()
+    attempt = 0
+    while attempt < len(attempts):
+        proxy = attempts[attempt]
+        attempt += 1
+        # Whole-call budget: the sum of hung attempts can never exceed
+        # SAFER_TOTAL_BUDGET, so one lookup cannot stall its request.
+        remaining = SAFER_TOTAL_BUDGET - (time.time() - started)
+        if remaining <= 0:
+            break
+        req_proxies = {"http": proxy, "https": proxy} if proxy else None
+        resp, err, timed_out = _request_with_deadline(
+            lambda _rp=req_proxies: requests.get(
+                SAFER_URL, params=params, headers=HEADERS,
+                timeout=(SAFER_CONNECT_TIMEOUT, SAFER_READ_TIMEOUT),
+                proxies=_rp),
+            deadline=min(SAFER_ATTEMPT_DEADLINE, remaining))
+        if timed_out:
+            # The connect/TLS handshake stalled past the hard deadline.
+            # A hung proxy is never going to answer: skip any remaining
+            # proxies and go straight to the direct attempt.
+            last_err = "Fetch timed out (connection stalled)"
+            if proxy is not None:
+                attempts = attempts[:attempt] + [None]
+            continue
+        if err is not None:
+            last_err = "Fetch error: %s" % err
+            # Dead proxy / network error: rotate immediately, no sleep —
+            # the next proxy is a different IP, so waiting helps nothing.
+            continue
+        if resp.status_code in (429, 503) or resp.status_code >= 500:
+            # SAFER itself is rate-limiting: wait, then retry.
+            last_err = "HTTP %s from SAFER" % resp.status_code
+            if attempt < len(attempts):
+                wait = BACKOFF[min(attempt - 1, len(BACKOFF) - 1)]
+                remaining = SAFER_TOTAL_BUDGET - (time.time() - started)
+                if remaining <= 0:
+                    break
+                time.sleep(min(wait, remaining))
                 continue
             return _error_record(identifier, last_err), last_err
+        try:
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            last_err = "Fetch error: %s" % exc
+            continue
+        rec = parse_snapshot(resp.text, identifier)
+        rec["fetch_error"] = False
+        rec["error"] = ""
+        if delay:
+            time.sleep(delay + random.uniform(0, 0.4))
+        return rec, None
     return _error_record(identifier, last_err or "Fetch error"), last_err
 
 
@@ -349,7 +428,6 @@ def classify(rec, selected_cargo=("general", "fresh", "reefer")):
 # means "no owner shown". Set ROAD_SOCRATA_APP_TOKEN (free, from
 # data.transportation.gov) to raise the limit.
 CENSUS_URL = "https://data.transportation.gov/resource/az4n-8mr2.json"
-CENSUS_TIMEOUT = 4
 _OFFICER_CACHE = {}
 
 
@@ -367,12 +445,19 @@ def fetch_company_officer(dot_number):
         token = os.environ.get("ROAD_SOCRATA_APP_TOKEN", "").strip()
         if token:
             headers["X-App-Token"] = token
-        r = requests.get(CENSUS_URL, params={
-            "dot_number": dot,
-            "$select": "company_officer_1,company_officer_2",
-            "$limit": "1",
-        }, headers=headers, timeout=CENSUS_TIMEOUT)
-        if r.status_code == 200:
+        # Hard deadline: a stalled Census connect/TLS handshake killed
+        # the gunicorn worker the same way a stalled SAFER fetch did
+        # (Render logs 2026-11-21, 10:26 UTC). Failure just means
+        # "no owner shown" — never a hang.
+        r, _err, _timed_out = _request_with_deadline(
+            lambda: requests.get(CENSUS_URL, params={
+                "dot_number": dot,
+                "$select": "company_officer_1,company_officer_2",
+                "$limit": "1",
+            }, headers=headers,
+              timeout=(CENSUS_CONNECT_TIMEOUT, CENSUS_READ_TIMEOUT)),
+            deadline=CENSUS_HARD_DEADLINE)
+        if r is not None and r.status_code == 200:
             rows = r.json()
             if rows:
                 row = rows[0]
@@ -472,23 +557,45 @@ def search_by_name(name, limit=50):
             seen.add(p)
     attempts.append(None)  # final direct attempt
     last_err = None
-    for attempt, proxy in enumerate(attempts):
-        try:
-            req_proxies = {"http": proxy, "https": proxy} if proxy else None
-            resp = requests.get(SAFER_URL, params=params, headers=HEADERS,
-                                timeout=(8 if proxy else TIMEOUT),
-                                proxies=req_proxies)
-            if resp.status_code in (429, 503) or resp.status_code >= 500:
-                last_err = "HTTP %s from SAFER" % resp.status_code
-                if attempt < len(attempts) - 1:
-                    time.sleep(BACKOFF[min(attempt, len(BACKOFF) - 1)])
-                    continue
-                return [], last_err
-            resp.raise_for_status()
-            return parse_name_matches(resp.text, limit), None
-        except requests.RequestException as exc:
-            last_err = "Fetch error: %s" % exc
-            if attempt < len(attempts) - 1:
+    started = time.time()
+    attempt = 0
+    while attempt < len(attempts):
+        proxy = attempts[attempt]
+        attempt += 1
+        # Same hard budget as fetch_snapshot: one name search can never
+        # stall its request past SAFER_TOTAL_BUDGET.
+        remaining = SAFER_TOTAL_BUDGET - (time.time() - started)
+        if remaining <= 0:
+            break
+        req_proxies = {"http": proxy, "https": proxy} if proxy else None
+        resp, err, timed_out = _request_with_deadline(
+            lambda _rp=req_proxies: requests.get(
+                SAFER_URL, params=params, headers=HEADERS,
+                timeout=(SAFER_CONNECT_TIMEOUT, SAFER_READ_TIMEOUT),
+                proxies=_rp),
+            deadline=min(SAFER_ATTEMPT_DEADLINE, remaining))
+        if timed_out:
+            last_err = "Fetch timed out (connection stalled)"
+            if proxy is not None:
+                attempts = attempts[:attempt] + [None]
+            continue
+        if err is not None:
+            last_err = "Fetch error: %s" % err
+            continue
+        if resp.status_code in (429, 503) or resp.status_code >= 500:
+            last_err = "HTTP %s from SAFER" % resp.status_code
+            if attempt < len(attempts):
+                wait = BACKOFF[min(attempt - 1, len(BACKOFF) - 1)]
+                remaining = SAFER_TOTAL_BUDGET - (time.time() - started)
+                if remaining <= 0:
+                    break
+                time.sleep(min(wait, remaining))
                 continue
             return [], last_err
+        try:
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            last_err = "Fetch error: %s" % exc
+            continue
+        return parse_name_matches(resp.text, limit), None
     return [], last_err or "Fetch error"
