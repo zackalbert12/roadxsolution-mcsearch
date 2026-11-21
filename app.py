@@ -1682,7 +1682,9 @@ def login():
         try:
             if form == "signup":
                 email = (request.form.get("email") or "").strip().lower()[:254]
-                username = (request.form.get("username") or "").strip()[:50]
+                # Usernames are stored lowercased (like emails) so
+                # 'Zack' and 'zack' cannot become two accounts.
+                username = (request.form.get("username") or "").strip().lower()[:50]
                 password = request.form.get("password") or ""
                 if not email or not username or len(password) < MIN_PASSWORD_LEN:
                     error = "Email, username and a password of %d+ characters are required." % MIN_PASSWORD_LEN
@@ -1783,7 +1785,7 @@ def login():
                 session.pop("totp_remember", None)
                 user = conn.execute(
                     "SELECT * FROM users WHERE email=? OR username=?",
-                    (ident.lower(), ident)).fetchone()
+                    (ident.lower(), ident.lower())).fetchone()
                 # Timing oracle: always run a hash check, even for an
                 # unknown identifier, so the response time does not
                 # reveal whether the account exists.
@@ -1939,7 +1941,7 @@ def login_otp_request():
     try:
         user = conn.execute(
             "SELECT * FROM users WHERE email=? OR username=?",
-            (email_key, ident)).fetchone()
+            (email_key, ident.lower())).fetchone()
         if user and _is_blocked(user):
             # Owner block: never send a login code to a blocked user.
             # The reply stays generic (same as an unknown identifier)
@@ -2011,7 +2013,7 @@ def login_otp_verify():
     try:
         user = conn.execute(
             "SELECT * FROM users WHERE email=? OR username=?",
-            (email_key, ident)).fetchone()
+            (email_key, ident.lower())).fetchone()
         row = None
         if user:
             row = conn.execute(
@@ -3775,7 +3777,7 @@ def admin_create_user():
     8–128 character rule as everywhere else."""
     admin = current_user()
     email = (request.form.get("email") or "").strip().lower()[:254]
-    username = (request.form.get("username") or "").strip()[:50]
+    username = (request.form.get("username") or "").strip().lower()[:50]
     password = request.form.get("password") or ""
     generated = False
     if not password:
