@@ -1081,26 +1081,40 @@ def _write_scan_result(user_id, scan_db_id, scan_id, rec):
                 # worker; there is no UNIQUE index to use INSERT OR
                 # IGNORE with, and adding one would fail on live DBs
                 # that already hold duplicates.)
-                exists = conn.execute(
+                # Upsert: a re-scan of the same MC must not add a
+                # second row for the same user+MC+source — instead the
+                # existing row is refreshed (new scan_id, fresh SAFER
+                # data, new checked_at), so per-scan lists stay right.
+                row = conn.execute(
                     "SELECT id FROM carriers WHERE user_id=? AND mc_number=?"
                     " AND source='scan' LIMIT 1",
                     (user_id, rec["mc_number"])).fetchone()
-                if not exists:
+                vals = (scan_id, rec.get("usdot_number") or "",
+                        rec.get("legal_name") or "",
+                        rec.get("dba_name") or "",
+                        rec.get("entity_type") or "",
+                        rec.get("authority_status") or "",
+                        json.dumps(rec.get("cargo_carried") or []),
+                        json.dumps(rec.get("cargo_categories") or []),
+                        rec.get("address_line1") or "", rec.get("city") or "",
+                        rec.get("state") or "", rec.get("phone") or "",
+                        rec.get("power_units") or "", now_str())
+                if row:
+                    conn.execute(
+                        "UPDATE carriers SET scan_id=?, usdot_number=?,"
+                        " legal_name=?, dba_name=?, entity_type=?,"
+                        " authority_status=?, cargo_carried=?,"
+                        " cargo_categories=?, address_line1=?, city=?,"
+                        " state=?, phone=?, power_units=?, checked_at=?"
+                        " WHERE id=?", vals + (row["id"],))
+                else:
                     conn.execute(
                         "INSERT INTO carriers (user_id, scan_id, source, mc_number,"
                         " usdot_number, legal_name, dba_name, entity_type,"
                         " authority_status, cargo_carried, cargo_categories,"
                         " address_line1, city, state, phone, power_units, checked_at)"
                         " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (user_id, scan_id, "scan", rec["mc_number"],
-                         rec.get("usdot_number") or "", rec.get("legal_name") or "",
-                         rec.get("dba_name") or "", rec.get("entity_type") or "",
-                         rec.get("authority_status") or "",
-                         json.dumps(rec.get("cargo_carried") or []),
-                         json.dumps(rec.get("cargo_categories") or []),
-                         rec.get("address_line1") or "", rec.get("city") or "",
-                         rec.get("state") or "", rec.get("phone") or "",
-                         rec.get("power_units") or "", now_str()))
+                        (user_id, scan_id, "scan", rec["mc_number"]) + vals[1:])
             if rec["status"] == "Error":
                 conn.execute(
                     "INSERT INTO error_mcs (user_id, scan_id, source, mc_number,"
@@ -1253,11 +1267,31 @@ def _write_motus_result(user_id, run_db_id, kind, usdot, rec):
             _log_check(conn, user_id, "motus-%s" % run_db_id, rec)
             if rec["qualified"]:
                 # Dedupe, same as _write_scan_result (user+MC+source).
-                exists = conn.execute(
+                # Upsert, same as _write_scan_result.
+                row = conn.execute(
                     "SELECT id FROM carriers WHERE user_id=? AND mc_number=?"
                     " AND source=? LIMIT 1",
                     (user_id, rec["mc_number"], source)).fetchone()
-                if not exists:
+                vals = ("motus-%s" % run_db_id,
+                        rec.get("usdot_number") or usdot,
+                        rec.get("legal_name") or "",
+                        rec.get("dba_name") or "",
+                        rec.get("entity_type") or "",
+                        rec.get("authority_status") or "",
+                        json.dumps(rec.get("cargo_carried") or []),
+                        json.dumps(rec.get("cargo_categories") or []),
+                        rec.get("address_line1") or "", rec.get("city") or "",
+                        rec.get("state") or "", rec.get("phone") or "",
+                        rec.get("power_units") or "", now_str())
+                if row:
+                    conn.execute(
+                        "UPDATE carriers SET scan_id=?, usdot_number=?,"
+                        " legal_name=?, dba_name=?, entity_type=?,"
+                        " authority_status=?, cargo_carried=?,"
+                        " cargo_categories=?, address_line1=?, city=?,"
+                        " state=?, phone=?, power_units=?, checked_at=?"
+                        " WHERE id=?", vals + (row["id"],))
+                else:
                     conn.execute(
                         "INSERT INTO carriers (user_id, scan_id, source, mc_number,"
                         " usdot_number, legal_name, dba_name, entity_type,"
@@ -1265,15 +1299,7 @@ def _write_motus_result(user_id, run_db_id, kind, usdot, rec):
                         " address_line1, city, state, phone, power_units, checked_at)"
                         " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (user_id, "motus-%s" % run_db_id, source,
-                         rec["mc_number"], rec.get("usdot_number") or usdot,
-                         rec.get("legal_name") or "", rec.get("dba_name") or "",
-                         rec.get("entity_type") or "",
-                         rec.get("authority_status") or "",
-                         json.dumps(rec.get("cargo_carried") or []),
-                         json.dumps(rec.get("cargo_categories") or []),
-                         rec.get("address_line1") or "", rec.get("city") or "",
-                         rec.get("state") or "", rec.get("phone") or "",
-                         rec.get("power_units") or "", now_str()))
+                         rec["mc_number"]) + vals[1:])
             if rec["status"] == "Error":
                 conn.execute(
                     "INSERT INTO error_mcs (user_id, scan_id, source, mc_number,"
@@ -3298,26 +3324,35 @@ def retry_error(eid):
                        direct_first=True)
         conn.execute("DELETE FROM error_mcs WHERE id=?", (eid,))
         if rec["qualified"]:
-            # Dedupe, same as _write_scan_result (user+MC+source).
-            exists = conn.execute(
+            # Upsert, same as _write_scan_result (user+MC+source).
+            existing = conn.execute(
                 "SELECT id FROM carriers WHERE user_id=? AND mc_number=?"
                 " AND source=? LIMIT 1",
                 (user["id"], rec["mc_number"], row["source"])).fetchone()
-            if not exists:
+            vals = (row["scan_id"], rec.get("usdot_number") or "",
+                    rec.get("legal_name") or "", rec.get("dba_name") or "",
+                    rec.get("entity_type") or "",
+                    rec.get("authority_status") or "",
+                    json.dumps(rec.get("cargo_carried") or []),
+                    json.dumps(rec.get("cargo_categories") or []),
+                    rec.get("address_line1") or "", rec.get("city") or "",
+                    rec.get("state") or "", rec.get("phone") or "",
+                    rec.get("power_units") or "", now_str())
+            if existing:
+                conn.execute(
+                    "UPDATE carriers SET scan_id=?, usdot_number=?,"
+                    " legal_name=?, dba_name=?, entity_type=?,"
+                    " authority_status=?, cargo_carried=?,"
+                    " cargo_categories=?, address_line1=?, city=?,"
+                    " state=?, phone=?, power_units=?, checked_at=?"
+                    " WHERE id=?", vals + (existing["id"],))
+            else:
                 conn.execute(
                     "INSERT INTO carriers (user_id, scan_id, source, mc_number,"
                     " usdot_number, legal_name, dba_name, entity_type, authority_status,"
                     " cargo_carried, cargo_categories, address_line1, city, state, phone,"
                     " power_units, checked_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (user["id"], row["scan_id"], row["source"], rec["mc_number"],
-                     rec.get("usdot_number") or "", rec.get("legal_name") or "",
-                     rec.get("dba_name") or "", rec.get("entity_type") or "",
-                     rec.get("authority_status") or "",
-                     json.dumps(rec.get("cargo_carried") or []),
-                     json.dumps(rec.get("cargo_categories") or []),
-                     rec.get("address_line1") or "", rec.get("city") or "",
-                     rec.get("state") or "", rec.get("phone") or "",
-                     rec.get("power_units") or "", now_str()))
+                    (user["id"], row["scan_id"], row["source"], rec["mc_number"]) + vals[1:])
             flash("MC-%s is qualified now — moved to Qualified Carriers."
                   % row["mc_number"])
         elif rec["status"] == "Error":
