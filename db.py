@@ -178,6 +178,32 @@ CREATE TABLE IF NOT EXISTS reset_failures (
     fails INTEGER NOT NULL DEFAULT 0,
     updated_at REAL NOT NULL
 );
+-- Email OTP login: one-time codes, stored HASHED, 10-minute expiry,
+-- single-use. Only the newest live code per user can be used.
+CREATE TABLE IF NOT EXISTS login_otps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    code_hash TEXT NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_login_otps_user ON login_otps(user_id);
+-- Failed OTP-code guesses, shared across workers (same pattern as
+-- reset_failures): after 5 wrong guesses the live code is cancelled.
+CREATE TABLE IF NOT EXISTS otp_failures (
+    email TEXT PRIMARY KEY,
+    fails INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL
+);
+-- Demo auto-close blocklist: emails of auto-closed Demo accounts may
+-- never sign up again. Self-service delete does NOT blocklist, and
+-- admin manual creation bypasses the blocklist.
+CREATE TABLE IF NOT EXISTS closed_demos (
+    email TEXT PRIMARY KEY,
+    user_id INTEGER,
+    closed_at TEXT NOT NULL
+);
 """
 
 

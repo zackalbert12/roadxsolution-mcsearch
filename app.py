@@ -13,11 +13,13 @@ import json
 import os
 import re
 import secrets
+import smtplib
 import sqlite3
 import string
 import threading
 import time
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 
 from flask import (
     Flask, request, session, redirect, url_for, render_template,
@@ -92,13 +94,16 @@ def now_time():
 # give Lifetime access. The trial is derived from plan + created_at — no
 # schema change. Timestamps are naive local time, same as now_str().
 DEMO_TRIAL_DAYS = 7
-DEMO_EXPIRED_MESSAGE = ("Your 7-day demo has ended. $1/month to continue — "
+DEMO_EXPIRED_MESSAGE = ("Your 7-day demo has ended. $5/month to continue — "
                         "contact the owner (WhatsApp +92 339 4126983, email "
                         "zackalbert.dispatch@gmail.com).")
 DEMO_CLOSED_MESSAGE = ("Your 7-day demo has ended and your account has been "
-                       "closed. Contact the owner for $1/month access — "
+                       "closed. Contact the owner for $5/month access — "
                        "WhatsApp +92 339 4126983, email "
                        "zackalbert.dispatch@gmail.com.")
+DEMO_BLOCKED_MESSAGE = ("Your demo has ended. $5/month to continue — "
+                        "contact the owner (WhatsApp +92 339 4126983, email "
+                        "zackalbert.dispatch@gmail.com).")
 DEMO_SCAN_LIMIT = 10000
 DEMO_SCAN_LIMIT_MESSAGE = ("Demo allows at most 10,000 MC numbers per scan;"
                            " ask the owner for Lifetime for larger scans.")
@@ -168,15 +173,21 @@ def _delete_user_data(conn, uid):
 
 
 def _close_expired_demo(user):
-    """Auto-close an expired Demo account: delete its data and clear
-    the session. Admin and Lifetime users are never closed —
-    _demo_status only reports expired for Demo-plan accounts.
-    Returns True when an account was closed."""
+    """Auto-close an expired Demo account: blocklist the email (so it
+    can never sign up again), delete its data and clear the session.
+    Admin and Lifetime users are never closed — _demo_status only
+    reports expired for Demo-plan accounts. Returns True when an
+    account was closed. Self-service delete does NOT blocklist —
+    it calls _delete_user_data directly, never this function."""
     expired, _ = _demo_status(user)
     if not expired:
         return False
     conn = store.connect()
     try:
+        conn.execute(
+            "INSERT OR IGNORE INTO closed_demos (email, user_id, closed_at)"
+            " VALUES (?,?,?)",
+            (user["email"].lower(), user["id"], now_str()))
         _delete_user_data(conn, user["id"])
         conn.commit()
     finally:
@@ -232,6 +243,112 @@ def _totp_verify(secret, code):
         return bool(pyotp.TOTP(secret).verify(code, valid_window=1))
     except Exception:
         return False
+
+
+# --- email OTP login -------------------------------------------------------
+# Passwordless sign-in: a 6-digit code is emailed to the user's
+# registered address. The code is stored HASHED (werkzeug hash, like
+# passwords), expires after 10 minutes, is single-use, and only the
+# newest live code per user works. Sending needs SMTP configured via
+# environment (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM);
+# with no SMTP config the request fails with a clear message — the
+# code is never shown on screen and never logged.
+OTP_EXPIRY_MINUTES = 10
+OTP_MAX_REQUESTS = 5          # OTP requests per email per 15 minutes
+OTP_REQUEST_WINDOW = 900
+OTP_MAX_ATTEMPTS = 5          # wrong-code guesses before the live code is cancelled
+OTP_VERIFY_WINDOW = 900       # lockout window for OTP-code guesses
+OTP_NOT_CONFIGURED_MESSAGE = ("Email login is not set up yet — ask the site "
+                              "owner to configure email sending, or sign in "
+                              "with your password.")
+
+
+def _smtp_config():
+    """SMTP settings from the environment, or None when not configured."""
+    host = (os.environ.get("SMTP_HOST") or "").strip()
+    port = os.environ.get("SMTP_PORT") or "587"
+    user = (os.environ.get("SMTP_USER") or "").strip()
+    password = os.environ.get("SMTP_PASS") or ""
+    sender = (os.environ.get("SMTP_FROM") or "").strip() or user
+    if not host or not user or not password:
+        return None
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return None
+    return {"host": host, "port": port, "user": user,
+            "password": password, "from": sender}
+
+
+def _send_login_otp_email(to_email, code):
+    """Send the 6-digit login code. Returns (True, None) on success,
+    (False, message) when email is not configured or sending fails.
+    The code is never logged."""
+    cfg = _smtp_config()
+    if cfg is None:
+        return (False, OTP_NOT_CONFIGURED_MESSAGE)
+    msg = EmailMessage()
+    msg["Subject"] = "Your RoadxSolutions login code"
+    msg["From"] = cfg["from"]
+    msg["To"] = to_email
+    msg.set_content(
+        "Your RoadxSolutions login code is: %s\n\n"
+        "It expires in %d minutes and can be used once. "
+        "If you did not request this code, ignore this email.\n"
+        % (code, OTP_EXPIRY_MINUTES))
+    try:
+        with smtplib.SMTP(cfg["host"], cfg["port"], timeout=15) as smtp:
+            smtp.ehlo()
+            try:
+                smtp.starttls()
+                smtp.ehlo()
+            except smtplib.SMTPException:
+                pass  # plain SMTP relay (e.g. local) — continue without TLS
+            smtp.login(cfg["user"], cfg["password"])
+            smtp.send_message(msg)
+    except Exception:
+        return (False, "Could not send the login code right now. Try again "
+                       "later, or sign in with your password.")
+    return (True, None)
+
+
+def _otp_fails(email):
+    """Failed OTP-code guesses recorded for `email` (shared count)."""
+    conn = store.connect()
+    try:
+        row = conn.execute("SELECT fails FROM otp_failures WHERE email=?",
+                           (email,)).fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
+
+def _otp_fails_inc(email):
+    """Record one more failed OTP-code guess; returns the new total."""
+    conn = store.connect()
+    try:
+        conn.execute(
+            "INSERT INTO otp_failures (email, fails, updated_at)"
+            " VALUES (?,?,?)"
+            " ON CONFLICT(email) DO UPDATE SET fails=fails+1,"
+            " updated_at=excluded.updated_at",
+            (email, 1, time.time()))
+        conn.commit()
+        row = conn.execute("SELECT fails FROM otp_failures WHERE email=?",
+                           (email,)).fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
+
+def _otp_fails_clear(email):
+    """Forget the failed-guess count (correct code used / new code sent)."""
+    conn = store.connect()
+    try:
+        conn.execute("DELETE FROM otp_failures WHERE email=?", (email,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # --- rate limiting (H1/H2): counters live in SQLite (rate_limit_events /
@@ -351,8 +468,9 @@ def _close_expired_demo_accounts():
     are never touched. Auth pages are excluded — the login route closes
     an expired account itself, but only after the password checks out
     (a wrong-password attempt must not delete anything)."""
-    if request.endpoint in ("login", "login_totp", "forgot",
-                            "reset_password", "static"):
+    if request.endpoint in ("login", "login_totp", "login_otp",
+                            "login_otp_request", "login_otp_verify",
+                            "forgot", "reset_password", "static"):
         return None
     if not session.get("user_id"):
         return None
@@ -1273,6 +1391,13 @@ def login():
                     error = "Email, username and a password of %d+ characters are required." % MIN_PASSWORD_LEN
                 elif len(password) > 128:
                     error = "Password must be at most 128 characters."
+                elif conn.execute("SELECT email FROM closed_demos WHERE email=?",
+                                  (email,)).fetchone():
+                    # A Demo account that was auto-closed can never sign
+                    # up again with the same email — it must pay $5/month
+                    # (owner's call) instead of getting a fresh trial.
+                    # Admin manual creation bypasses this (separate route).
+                    error = DEMO_BLOCKED_MESSAGE
                 elif conn.execute("SELECT id FROM users WHERE email=? OR username=?",
                                   (email, username)).fetchone():
                     error = "An account with this email or username already exists. Try logging in instead."
@@ -1407,6 +1532,196 @@ def login_totp():
         conn.close()
 
 
+@app.route("/login/otp", methods=["GET"])
+def login_otp():
+    """Email-code sign-in, step 1: ask for the email/username."""
+    if current_user():
+        return redirect(url_for("dashboard"))
+    return render_template("login.html", error="", otp_request=True)
+
+
+@app.route("/login/otp/request", methods=["POST"])
+def login_otp_request():
+    """Email-code sign-in, step 1 submit: email the 6-digit code.
+
+    The reply never reveals whether the identifier has an account
+    (same as /forgot) — but a code is only sent when it does. An
+    expired Demo account is NOT closed here: the code is the
+    credential, and closing happens only after it checks out, in
+    login_otp_verify (like the password login)."""
+    if current_user():
+        return redirect(url_for("dashboard"))
+    # A half-finished 2FA step from an earlier attempt must not linger.
+    session.pop("totp_user_id", None)
+    session.pop("totp_remember", None)
+    ident = (request.form.get("identifier") or "").strip()
+    email_key = ident.lower()
+    # 5 OTP requests per email per 15 minutes.
+    if _rate_limited(("otp-request", email_key), OTP_MAX_REQUESTS,
+                     OTP_REQUEST_WINDOW):
+        return render_template("login.html", error="Too many code requests "
+                               "for this email. Try again later.",
+                               otp_request=True), 429
+    message = ("If an account exists for that email/username, a 6-digit "
+               "login code was sent to the registered email. It expires "
+               "in %d minutes." % OTP_EXPIRY_MINUTES)
+    conn = store.connect()
+    try:
+        user = conn.execute(
+            "SELECT * FROM users WHERE email=? OR username=?",
+            (email_key, ident)).fetchone()
+        if not user:
+            return render_template("login.html", error="", message=message,
+                                   otp_verify=True, otp_identifier=ident)
+        code = "%06d" % secrets.randbelow(1000000)
+        expires = (datetime.now()
+                   + timedelta(minutes=OTP_EXPIRY_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute("UPDATE login_otps SET used=1 WHERE user_id=? AND used=0",
+                     (user["id"],))
+        conn.execute(
+            "INSERT INTO login_otps (user_id, code_hash, used, created_at,"
+            " expires_at) VALUES (?,?,?,?,?)",
+            (user["id"], generate_password_hash(code), 0, now_str(), expires))
+        conn.commit()
+        _otp_fails_clear(email_key)  # a fresh code restarts the guess budget
+    finally:
+        conn.close()
+    ok, send_error = _send_login_otp_email(user["email"], code)
+    if not ok:
+        # The code row is already stored; without a sent email it can
+        # never be used (it expires in 10 minutes) — but drop it
+        # anyway so a later misconfiguration cannot leak a live code.
+        conn = store.connect()
+        try:
+            conn.execute("UPDATE login_otps SET used=1 WHERE user_id=? AND used=0",
+                         (user["id"],))
+            conn.commit()
+        finally:
+            conn.close()
+        return render_template("login.html", error=send_error,
+                               otp_request=True)
+    _log_admin_action(None, user["id"], "otp_code_sent")
+    return render_template("login.html", error="", message=message,
+                           otp_verify=True, otp_identifier=ident)
+
+
+@app.route("/login/otp/verify", methods=["POST"])
+def login_otp_verify():
+    """Email-code sign-in, step 2: check the 6-digit code and log in.
+
+    Wrong codes share the login rate-limit budget (like login_totp)
+    and the per-email guess budget (5 per 15 min); after 5 wrong
+    guesses the live code is cancelled. A correct code is single-use.
+    After the code checks out, an expired Demo account is closed
+    (never logged in) and a TOTP-enabled account still goes through
+    the unchanged TOTP step."""
+    if current_user():
+        return redirect(url_for("dashboard"))
+    if _rate_limited(("login", request.remote_addr), 5, 60) or \
+            _rate_limited(("login-h", request.remote_addr), 20, 3600):
+        error = "Too many login attempts from this address. Try again later."
+        return render_template("login.html", error=error,
+                               otp_verify=True,
+                               otp_identifier=request.form.get("identifier") or ""), 429
+    ident = (request.form.get("identifier") or "").strip()
+    code = (request.form.get("code") or "").strip()
+    email_key = ident.lower()
+    if _rate_limited(("otp-verify", email_key), OTP_MAX_ATTEMPTS,
+                     OTP_VERIFY_WINDOW):
+        error = "Too many code attempts for this email. Try again later."
+        return render_template("login.html", error=error,
+                               otp_verify=True, otp_identifier=ident), 429
+    conn = store.connect()
+    try:
+        user = conn.execute(
+            "SELECT * FROM users WHERE email=? OR username=?",
+            (email_key, ident)).fetchone()
+        row = None
+        if user:
+            row = conn.execute(
+                "SELECT * FROM login_otps WHERE user_id=? AND used=0"
+                " ORDER BY id DESC LIMIT 1", (user["id"],)).fetchone()
+        if not user or not row:
+            fails = _otp_fails_inc(email_key)
+            cancelled = False
+            if user and fails >= OTP_MAX_ATTEMPTS:
+                conn.execute("UPDATE login_otps SET used=1"
+                             " WHERE user_id=? AND used=0", (user["id"],))
+                _otp_fails_clear(email_key)
+                cancelled = True
+            if user:
+                conn.execute(
+                    "INSERT INTO login_events (user_id, identifier, success,"
+                    " ip, created_at) VALUES (?,?,?,?,?)",
+                    (user["id"], ident, 0, request.remote_addr, now_str()))
+            conn.commit()
+            error = ("Too many wrong codes — this code was cancelled. "
+                     "Request a new one.") if cancelled else \
+                    "Invalid or expired code. Request a new one."
+            return render_template("login.html", error=error,
+                                   otp_verify=True, otp_identifier=ident)
+        if row["expires_at"] < now_str():
+            _otp_fails_clear(email_key)
+            return render_template("login.html",
+                                   error="That code has expired. Request a new one.",
+                                   otp_verify=True, otp_identifier=ident)
+        if not check_password_hash(row["code_hash"], code):
+            fails = _otp_fails_inc(email_key)
+            conn.execute(
+                "INSERT INTO login_events (user_id, identifier, success,"
+                " ip, created_at) VALUES (?,?,?,?,?)",
+                (user["id"], ident, 0, request.remote_addr, now_str()))
+            if fails >= OTP_MAX_ATTEMPTS:
+                conn.execute("UPDATE login_otps SET used=1"
+                             " WHERE user_id=? AND used=0", (user["id"],))
+                conn.commit()
+                _otp_fails_clear(email_key)
+                error = ("Too many wrong codes — this code was cancelled. "
+                         "Request a new one.")
+            else:
+                conn.commit()
+                error = "Invalid code. Try again."
+            return render_template("login.html", error=error,
+                                   otp_verify=True, otp_identifier=ident)
+        # Code is right: single-use, then the normal login steps.
+        conn.execute("UPDATE login_otps SET used=1 WHERE id=?", (row["id"],))
+        conn.commit()
+        _otp_fails_clear(email_key)
+        user = dict(user)
+    finally:
+        conn.close()
+    expired, _ = _demo_status(user)
+    if expired:
+        _close_expired_demo(user)
+        return render_template("login.html", error=DEMO_CLOSED_MESSAGE)
+    if _totp_enabled(user):
+        if pyotp is None:
+            return render_template("login.html",
+                                   error="Two-factor verification is unavailable"
+                                         " right now. Try again later.",
+                                   otp_verify=True, otp_identifier=ident)
+        session["totp_user_id"] = user["id"]
+        session["totp_remember"] = False
+        return render_template("login.html", error="",
+                               totp_required=True,
+                               totp_username=user["username"])
+    conn = store.connect()
+    try:
+        conn.execute(
+            "INSERT INTO login_events (user_id, identifier, success, ip,"
+            " created_at) VALUES (?,?,?,?,?)",
+            (user["id"], ident, 1, request.remote_addr, now_str()))
+        conn.execute(
+            "UPDATE users SET last_login=?, login_count=login_count+1"
+            " WHERE id=?", (now_str(), user["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    _log_admin_action(None, user["id"], "otp_login")
+    _login_user(user, False)
+    return redirect(url_for("dashboard"))
+
+
 @app.route("/logout")
 def logout():
     # Flask sessions are client-side (signed cookies), so clearing the
@@ -1533,12 +1848,19 @@ def dashboard():
         totals = conn.execute(
             "SELECT COUNT(*) c, SUM(qualified) q FROM scans WHERE user_id=?",
             (user["id"],)).fetchone()
+        # CSV export has no row cap — show how many carriers the
+        # Download CSV button will export, so the count is visible
+        # where the download is offered.
+        scan_csv_count = conn.execute(
+            "SELECT COUNT(*) FROM carriers WHERE user_id=? AND source='scan'",
+            (user["id"],)).fetchone()[0]
         demo_expired, demo_days_left = _demo_status(user)
         return render_template(
             "dashboard.html", user=user, settings=settings,
             scan=dict(scan) if scan else None,
             log=[dict(r) for r in log],
             total_scanned=totals["c"] or 0,
+            scan_csv_count=scan_csv_count,
             commodities=commodity_names(),
             running=user["id"] in RUNNING_SCANS,
             demo_expired=demo_expired,

@@ -6,9 +6,9 @@
   <p>Check a whole range of MC numbers at once — we look up each one live on FMCSA SAFER and keep only the good carriers.</p>
   {% if user.plan == 'Demo' %}
     {% if demo_expired %}
-      <p class="alert">Your 7-day demo has ended. $1/month to continue — contact the owner (WhatsApp {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a>, email zackalbert.dispatch@gmail.com).</p>
+      <p class="alert">Your 7-day demo has ended. $5/month to continue — contact the owner (WhatsApp {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a>, email zackalbert.dispatch@gmail.com).</p>
     {% else %}
-      <p class="notice">Demo trial: {{ demo_days_left }} day{{ 's' if demo_days_left != 1 else '' }} left — $0 for 1 month trial, full access. When the trial ends your account will be closed — $1/month to continue. Contact the owner: {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a> · zackalbert.dispatch@gmail.com.</p>
+      <p class="notice">Demo trial: {{ demo_days_left }} day{{ 's' if demo_days_left != 1 else '' }} left — $0 for 1 month trial, full access. When the trial ends your account will be closed — $5/month to continue. Contact the owner: {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a> · zackalbert.dispatch@gmail.com.</p>
     {% endif %}
   {% endif %}
   <p class="next">What to do: type a Start MC and an End MC below, then press Start Scanning.</p>
@@ -38,7 +38,7 @@
       <div><button class="btn" id="btn-start" type="submit">Start Scanning</button></div>
       <div><button class="btn" id="btn-resume" type="button" onclick="resumeScan()" style="display:none">Resume Scan</button></div>
       <div><button class="btn secondary" id="btn-stop" type="button" onclick="stopScan()" disabled>Stop</button></div>
-      <div><a class="btn secondary" href="{{ url_for('api_scan_csv') }}">Download CSV</a></div>
+      <div><a class="btn secondary" href="{{ url_for('api_scan_csv') }}">Download CSV ({{ scan_csv_count }} carriers)</a></div>
     </div>
     <p class="muted" id="commodity-note" style="display:none"></p>
     <p class="notice" id="scan-message" style="display:none"></p>

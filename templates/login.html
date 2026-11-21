@@ -7,6 +7,7 @@
     <p style="text-align:center">Sign in to your dispatcher workspace</p>
     <p class="muted" style="text-align:center">Log in to scan MC numbers and see your carriers. New here? Press Sign Up below.</p>
     {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+    {% if message %}<div class="notice">{{ message }}</div>{% endif %}
     {% if totp_required %}
     <div id="pane-totp">
       <p style="text-align:center"><b>Two-factor authentication</b><br><span class="muted">Enter the 6-digit code from your authenticator app{% if totp_username %} for <b>{{ totp_username }}</b>{% endif %}.</span></p>
@@ -17,6 +18,29 @@
         <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Verify &amp; Sign In</button></div>
       </form>
       <p style="text-align:center;margin-top:10px"><a href="{{ url_for('login') }}">Back to sign in</a></p>
+    </div>
+    {% elif otp_request %}
+    <div id="pane-otp-request">
+      <p style="text-align:center"><b>Sign in with an email code</b><br><span class="muted">We will email a 6-digit code to your registered address. It expires in 10 minutes.</span></p>
+      <form method="post" action="{{ url_for('login_otp_request') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>Username or Email</label>
+        <input type="text" name="identifier" placeholder="Username or email" required>
+        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Send Login Code</button></div>
+      </form>
+      <p style="text-align:center;margin-top:10px"><a href="{{ url_for('login') }}">Back to password sign in</a></p>
+    </div>
+    {% elif otp_verify %}
+    <div id="pane-otp-verify">
+      <p style="text-align:center"><b>Enter your login code</b><br><span class="muted">We emailed a 6-digit code{% if otp_identifier %} for <b>{{ otp_identifier }}</b>{% endif %}. It expires in 10 minutes.</span></p>
+      <form method="post" action="{{ url_for('login_otp_verify') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="identifier" value="{{ otp_identifier }}">
+        <label>Login code</label>
+        <input type="text" name="code" placeholder="123456" required maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Verify &amp; Sign In</button></div>
+      </form>
+      <p style="text-align:center;margin-top:10px"><a href="{{ url_for('login_otp') }}">Request a new code</a> · <a href="{{ url_for('login') }}">Back to password sign in</a></p>
     </div>
     {% else %}
     <div class="tabs">
@@ -35,6 +59,7 @@
         <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Sign In</button></div>
       </form>
       <p style="text-align:center;margin-top:10px"><a href="{{ url_for('carrier_search') }}">Search a carrier — no login needed</a></p>
+      <p style="text-align:center;margin-top:10px"><a href="{{ url_for('login_otp') }}">Sign in with an email code instead</a></p>
     </div>
     <div id="pane-signup" style="display:none">
       <form method="post" action="{{ url_for('login') }}">
