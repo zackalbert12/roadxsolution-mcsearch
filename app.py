@@ -9,6 +9,7 @@ import csv
 import hashlib
 import hmac
 import io
+import ipaddress
 import json
 import os
 import re
@@ -35,6 +36,15 @@ try:
     import pyotp
 except ImportError:  # pragma: no cover - missing dependency
     pyotp = None
+
+# cryptography is in requirements.txt for TOTP-secret encryption at rest
+# (see _totp_fernet). Guard the import like pyotp so a stale environment
+# without it still boots — secrets then fall back to plaintext storage
+# with a loud startup warning instead of crashing the whole app.
+try:
+    from cryptography.fernet import Fernet
+except ImportError:  # pragma: no cover - missing dependency
+    Fernet = None
 
 import db as store
 from safer import check_mc, check_usdot, search_by_name, fetch_company_officer
@@ -75,9 +85,72 @@ app.config["SESSION_COOKIE_SECURE"] = \
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 # M7: reject oversized request bodies outright.
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
-# M8: Render terminates TLS at its proxy — trust X-Forwarded-For/Proto so
-# request.remote_addr and request.is_secure are the real client.
+# M8: client IP behind Render's edge — read this before touching it.
+#
+# The request path on Render is: client -> Cloudflare -> Render proxy
+# -> this app. Every proxy APPENDS to X-Forwarded-For without stripping
+# what the client sent, so by the time a request reaches us the header
+# looks like "<anything the client wrote>, <client>, <cloudflare>,
+# <render>" (verified live against Render by third-party header-echo
+# services; Render's own docs confirm all inbound traffic passes
+# through Cloudflare and then Render's load balancers). Two consequences:
+#
+# 1. ProxyFix(x_for=1) does NOT give the real client IP. Werkzeug takes
+#    the LAST X-Forwarded-For entry, which is a Render internal IP (or a
+#    Cloudflare edge IP) — an address shared by many users, not the
+#    client. With x_for=1, the login/search/bulk rate limits (keyed on
+#    request.remote_addr) were effectively shared buckets: one abusive
+#    user could 429 everyone behind the same edge IP, and every
+#    login_events.ip was a proxy IP. Counting more hops (x_for=2 or 3)
+#    was NOT used as the fix: the hop count is not stable (independent
+#    live observations show both two- and three-entry chains), and
+#    over-counting is worse than under-counting — if the chain were ever
+#    shorter than x_for, values[-x_for] would land on an
+#    attacker-controlled entry and any visitor could spoof any IP and
+#    bypass the per-IP rate limits entirely.
+# 2. The client IP therefore comes from CF-Connecting-IP (fallback
+#    True-Client-IP), set by Cloudflare to the real client IP. A forged
+#    CF-Connecting-IP never reaches us — Cloudflare rejects it with 403
+#    — and a forged True-Client-IP is overwritten with the real client
+#    IP. _CloudflareClientIpMiddleware below applies this ONLY when the
+#    RENDER env var is set (Render sets it for every web service):
+#    without Render in front there is no Cloudflare, a client COULD
+#    forge these headers, and the socket peer is the only trustworthy
+#    value — so locally, or if the app were ever run directly exposed,
+#    the headers are ignored entirely and remote_addr stays the socket
+#    peer. If the app is ever moved off Render, this middleware must be
+#    revisited for whatever sits in front of it then.
+#
+# ProxyFix stays for the scheme (x_proto=1 takes the last
+# X-Forwarded-Proto value, the Render edge's view of the client-facing
+# protocol, https) and as the remote_addr fallback when the Cloudflare
+# headers are absent. Nothing in the app currently depends on
+# request.is_secure (no _external URLs are generated — password reset is
+# code-based, not link-based), so a wrong scheme would be cosmetic.
+class _CloudflareClientIpMiddleware:
+    """On Render, set REMOTE_ADDR from CF-Connecting-IP (fallback
+    True-Client-IP). See the M8 comment above for why X-Forwarded-For
+    is not used for the client IP, and why this only runs on Render."""
+
+    def __init__(self, app):
+        self.app = app
+
+    def __call__(self, environ, start_response):
+        if os.environ.get("RENDER"):
+            ip = (environ.get("HTTP_CF_CONNECTING_IP")
+                  or environ.get("HTTP_TRUE_CLIENT_IP") or "").strip()
+            if ip:
+                try:
+                    ipaddress.ip_address(ip)
+                except ValueError:
+                    ip = ""
+            if ip:
+                environ["REMOTE_ADDR"] = ip
+        return self.app(environ, start_response)
+
+
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+app.wsgi_app = _CloudflareClientIpMiddleware(app.wsgi_app)
 
 store.init_db()
 
@@ -354,6 +427,128 @@ def _totp_verify(secret, code):
         return bool(pyotp.TOTP(secret).verify(code, valid_window=1))
     except Exception:
         return False
+
+
+# --- TOTP secret encryption at rest ---------------------------------------
+# users.totp_secret used to hold the admin's TOTP secret as plaintext
+# base32. It is now encrypted with Fernet (AES-128-CBC + HMAC-SHA256,
+# from the `cryptography` package) under a key from the ROAD_TOTP_KEY
+# environment variable — a base64 32-byte Fernet key. Generate one with
+# `python -c "from cryptography.fernet import Fernet; print(
+# Fernet.generate_key().decode())"` and set it in the Render dashboard
+# (it is NOT in render.yaml: the key must never be committed). Encrypted
+# values are stored with an "enc1:" prefix so they can be told apart
+# from legacy plaintext values. The prefix also guarantees an encrypted
+# value is never mistaken for a base32 secret: it contains lowercase
+# letters and a colon, which base32 does not.
+_TOTP_ENC_PREFIX = "enc1:"
+_totp_fernet_cache = {}
+
+
+def _totp_key_status():
+    """(status, detail) for TOTP-secret encryption: "ok" when a valid
+    Fernet key is configured, "missing" when ROAD_TOTP_KEY is unset,
+    "invalid" when it is set but not a valid Fernet key, "no-lib" when
+    the `cryptography` package is not installed."""
+    if Fernet is None:
+        return ("no-lib", "the 'cryptography' package is not installed")
+    key = (os.environ.get("ROAD_TOTP_KEY") or "").strip()
+    if not key:
+        return ("missing", "ROAD_TOTP_KEY is not set")
+    try:
+        Fernet(key.encode())
+    except Exception:
+        return ("invalid", "ROAD_TOTP_KEY is not a valid Fernet key")
+    return ("ok", "")
+
+
+def _totp_fernet():
+    """Fernet instance for ROAD_TOTP_KEY, or None when encryption is off
+    (no key, invalid key, or no `cryptography` package). The result is
+    cached per key value, so changing the env var mid-process (tests do
+    this) takes effect on the next call."""
+    if Fernet is None:
+        return None
+    key = (os.environ.get("ROAD_TOTP_KEY") or "").strip()
+    if key not in _totp_fernet_cache:
+        try:
+            _totp_fernet_cache[key] = Fernet(key.encode())
+        except Exception:
+            _totp_fernet_cache[key] = None
+    return _totp_fernet_cache[key]
+
+
+def _totp_encryption_on():
+    """True when newly stored TOTP secrets will be encrypted."""
+    return _totp_fernet() is not None
+
+
+def _totp_store_secret(plaintext):
+    """Encode a plaintext base32 secret for storage: "enc1:" + Fernet
+    ciphertext when encryption is configured, else the plaintext itself
+    (legacy fallback — see the startup warning below)."""
+    f = _totp_fernet()
+    if f is None:
+        return plaintext
+    return _TOTP_ENC_PREFIX + f.encrypt(plaintext.encode()).decode()
+
+
+def _totp_resolve_secret(stored):
+    """Return the plaintext base32 secret for a stored totp_secret
+    value, or None when it cannot be recovered. Encrypted values are
+    decrypted; legacy plaintext values are returned as-is; undecryptable
+    values (wrong key, tampered ciphertext) fail closed (None) instead
+    of crashing — the login is refused rather than the app erroring."""
+    if not stored:
+        return None
+    if stored.startswith(_TOTP_ENC_PREFIX):
+        f = _totp_fernet()
+        if f is None:
+            return None
+        try:
+            return f.decrypt(stored[len(_TOTP_ENC_PREFIX):].encode()).decode()
+        except Exception:
+            return None
+    return stored
+
+
+def _totp_is_encrypted(stored):
+    return bool(stored) and stored.startswith(_TOTP_ENC_PREFIX)
+
+
+def _totp_verify_stored(stored, code, conn=None, user_id=None):
+    """Verify a 6-digit code against a stored totp_secret value
+    (encrypted or legacy plaintext). On a successful verification of a
+    legacy plaintext secret — and only then — the secret is
+    transparently re-encrypted in place (needs the open conn + user_id,
+    as in login_totp), so existing 2FA logins keep working and upgrade
+    themselves on first use after encryption is switched on. A failed
+    upgrade write never fails the login: it is best-effort and the
+    plaintext value still verifies next time."""
+    secret = _totp_resolve_secret(stored)
+    if secret is None or not _totp_verify(secret, code):
+        return False
+    if (conn is not None and user_id is not None
+            and not _totp_is_encrypted(stored)
+            and _totp_fernet() is not None):
+        try:
+            conn.execute(
+                "UPDATE users SET totp_secret=? WHERE id=?",
+                (_totp_store_secret(secret), user_id))
+        except Exception:
+            pass
+    return True
+
+
+# Loud startup warning when TOTP secrets would be stored as plaintext: a
+# missing/invalid ROAD_TOTP_KEY on Render must be noticed, not silent.
+# (Runs once at import; _totp_key_status() is the same check on demand.)
+_totp_status, _totp_status_detail = _totp_key_status()
+if _totp_status != "ok":
+    print("WARNING: TOTP secrets will be stored as PLAINTEXT (%s). Set a"
+          " valid ROAD_TOTP_KEY (base64 32-byte Fernet key) in the Render"
+          " dashboard to encrypt them at rest."
+          % _totp_status_detail, flush=True)
 
 
 # --- email OTP login -------------------------------------------------------
@@ -1918,7 +2113,11 @@ def login_totp():
             session.pop("totp_remember", None)
             return redirect(url_for("login"))
         code = request.form.get("totp_code") or ""
-        if pyotp is None or not _totp_verify(user["totp_secret"], code):
+        # _totp_verify_stored resolves encrypted or legacy-plaintext
+        # secrets, and transparently re-encrypts a legacy secret in
+        # place on success (same transaction, committed below).
+        if pyotp is None or not _totp_verify_stored(
+                user["totp_secret"], code, conn, user["id"]):
             conn.execute(
                 "INSERT INTO login_events (user_id, identifier, success, ip,"
                 " created_at) VALUES (?,?,?,?,?)",
@@ -3964,6 +4163,15 @@ def admin_create_user():
 
 
 # ---------------------------------------------------------------- 2FA (TOTP)
+# OPT-IN admin 2FA — Zack's choice (2026-11-21): the admin may turn it
+# on, and it is NEVER enforced. There is deliberately no code path that
+# requires a TOTP code when no secret is stored, and none should be
+# added without Zack's explicit go-ahead: enforcing it by default could
+# lock the owner out of his own admin account if the authenticator is
+# lost (there is no recovery path except direct DB access). The setup
+# flow stores the secret only after the admin confirms it with a
+# current code, so a half-finished setup cannot lock anyone out;
+# disabling requires the admin's own password.
 
 @app.route("/admin/2fa/setup", methods=["POST"])
 @admin_required
@@ -4009,8 +4217,10 @@ def admin_2fa_confirm():
         return redirect(url_for("admin_page"))
     conn = store.connect()
     try:
+        # Stored encrypted when ROAD_TOTP_KEY is configured
+        # (_totp_store_secret); plaintext legacy fallback otherwise.
         conn.execute("UPDATE users SET totp_secret=? WHERE id=?",
-                     (pending, admin["id"]))
+                     (_totp_store_secret(pending), admin["id"]))
         conn.commit()
     finally:
         conn.close()

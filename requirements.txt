@@ -4,3 +4,4 @@ requests==2.33.0
 beautifulsoup4==4.12.3
 Werkzeug==3.1.9
 pyotp==2.12.1
+cryptography==50.0.2
