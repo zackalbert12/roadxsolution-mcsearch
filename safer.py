@@ -10,8 +10,9 @@ giving up. Bulk scans go through rotating proxies (like the original
 site) so one IP never hammers SAFER; single searches go DIRECT FIRST
 (a working direct call takes ~4 s, blind proxy rotation was costing
 ~30 s) and only fall back to proxies when direct fails. The proxy
-pool itself is health-checked once per cache TTL — dead/slow free
-proxies never reach the rotation.
+pool itself is health-checked once per cache TTL — dead/slow
+proxies never reach the rotation. There is no free proxy list:
+ROAD_PROXIES pins proxies explicitly, otherwise fetches go direct.
 """
 import concurrent.futures
 import os
@@ -54,7 +55,6 @@ SAFER_TOTAL_BUDGET = 20      # hard seconds for one fetch_snapshot/search call
 CENSUS_CONNECT_TIMEOUT = 5
 CENSUS_READ_TIMEOUT = 10
 CENSUS_HARD_DEADLINE = 10    # hard seconds for one officer lookup
-PROXY_LIST_DEADLINE = 10     # hard seconds for the proxy-list fetch
 
 
 def _request_with_deadline(fn, deadline):
@@ -87,24 +87,22 @@ def _request_with_deadline(fn, deadline):
     return box["result"], None, False
 
 # --- proxies -------------------------------------------------------------
-PROXY_LIST_URL = os.environ.get(
-    "ROAD_PROXY_LIST_URL",
-    "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http"
-    "&timeout=10000&country=all&ssl=all&anonymity=all")
+# No free proxy list: the unauthenticated ProxyScrape feed was a trust
+# exposure and the pool was empty in practice anyway, so scans already
+# go direct — the fetch only cost ~0.6 s per load to re-validate.
+# ROAD_PROXIES (comma-separated http://host:port) still pins proxies
+# explicitly; otherwise every fetch is direct.
 PROXY_CACHE_TTL = 600  # seconds
 _PROXY_POOL = {"list": [], "fetched_at": 0.0, "idx": 0,
                "lock": threading.Lock()}
 
 # --- proxy health-check ---------------------------------------------------
-# The free ProxyScrape list is mostly dead/slow proxies: trying them
-# blind burns up to the 10 s hard deadline each, which is what made a
-# single live search take ~30 s. So a freshly fetched list is probed
-# once (in parallel, hard-budgeted) and only proxies that answer fast
-# are kept, fastest first. Env-provided proxies (ROAD_PROXIES) go
-# through the same check — a dead paid proxy must not stall a search
-# either. Validation runs at most once per PROXY_CACHE_TTL, and a
-# direct-first search never pays for it on the happy path (the pool is
-# only loaded after direct fails).
+# Env-provided proxies (ROAD_PROXIES) are probed once (in parallel,
+# hard-budgeted) and only proxies that answer fast are kept, fastest
+# first — a dead paid proxy must not stall a search. Validation runs
+# at most once per PROXY_CACHE_TTL, and a direct-first search never
+# pays for it on the happy path (the pool is only loaded after direct
+# fails).
 PROXY_PROBE_URL = "https://example.com"  # tiny, reliable HTTPS endpoint
 PROXY_PROBE_TIMEOUT = (2, 3)   # (connect, read) per probe
 PROXY_PROBE_DEADLINE = 3       # hard seconds per probe
@@ -171,7 +169,7 @@ def _validate_proxies(proxies):
 
 def _load_proxies():
     """Proxy list: ROAD_PROXIES env (comma-separated http://host:port)
-    wins; otherwise fetch a free public list. The fresh list is
+    only — there is no free-list fallback. The fresh list is
     health-checked once per PROXY_CACHE_TTL (see _validate_proxies)
     and cached — callers only ever see proxies that answered fast.
     Returns [] when proxies are disabled (ROAD_NO_PROXY=1) or none
@@ -186,21 +184,6 @@ def _load_proxies():
     env = os.environ.get("ROAD_PROXIES", "").strip()
     if env:
         raw = [p.strip() for p in env.split(",") if p.strip()]
-    else:
-        try:
-            # Hard deadline: the proxy-list fetch is also an outbound call
-            # and must never stall the request that triggered it.
-            resp, _err, _timed_out = _request_with_deadline(
-                lambda: requests.get(PROXY_LIST_URL, timeout=(5, 10),
-                                     headers=HEADERS),
-                deadline=PROXY_LIST_DEADLINE)
-            if resp is not None and resp.status_code == 200:
-                for line in resp.text.splitlines():
-                    line = line.strip()
-                    if re.match(r"^\d+\.\d+\.\d+\.\d+:\d+$", line):
-                        raw.append("http://" + line)
-        except Exception:
-            raw = []
     # Health-check the fresh list (bounded, ~10 s max): dead/slow
     # proxies never reach the rotation. An empty result just means
     # "fetch direct" — callers already handle that.
