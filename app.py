@@ -1702,7 +1702,19 @@ def login():
                     error = BLOCKED_MESSAGE
                 elif conn.execute("SELECT id FROM users WHERE email=? OR username=?",
                                   (email, username)).fetchone():
-                    error = "An account with this email or username already exists. Try logging in instead."
+                    # Enumeration fix: the reply is the SAME generic
+                    # message as a fresh signup, and no code is sent
+                    # and no pending row is created — an attacker
+                    # cannot tell whether the email/username exists.
+                    return render_template(
+                        "login.html", error="",
+                        message=("If an account does not already exist for "
+                                 "this email, a 6-digit verification code "
+                                 "was emailed to %s. Enter it below to "
+                                 "finish creating your account. It expires "
+                                 "in %d minutes."
+                                 % (email, OTP_EXPIRY_MINUTES)),
+                        signup_verify=True, signup_email=email)
                 else:
                     # Signup email verification (Zack 2026-11-21): the
                     # account is created ONLY after the user proves
@@ -1749,9 +1761,11 @@ def login():
                     else:
                         return render_template(
                             "login.html", error="",
-                            message=("We emailed a 6-digit verification code "
-                                     "to %s. Enter it below to finish creating "
-                                     "your account. It expires in %d minutes."
+                            message=("If an account does not already exist for "
+                                     "this email, a 6-digit verification code "
+                                     "was emailed to %s. Enter it below to "
+                                     "finish creating your account. It expires "
+                                     "in %d minutes."
                                      % (email, OTP_EXPIRY_MINUTES)),
                             signup_verify=True, signup_email=email)
             else:
@@ -2250,9 +2264,14 @@ def signup_verify_resend():
             "SELECT * FROM pending_signups WHERE email=? AND used=0"
             " ORDER BY id DESC LIMIT 1", (email,)).fetchone()
         if not row:
+            # Enumeration fix: same generic message as a successful
+            # resend — no code is sent, and the caller cannot tell
+            # whether a pending signup exists for this email.
             return render_template(
-                "login.html",
-                error="No pending signup for this email. Sign up again.",
+                "login.html", error="",
+                message=("A new 6-digit verification code was emailed to %s. "
+                         "It expires in %d minutes."
+                         % (email, OTP_EXPIRY_MINUTES)),
                 signup_verify=True, signup_email=email)
         code = "%06d" % secrets.randbelow(1000000)
         expires = (datetime.now()
