@@ -3140,7 +3140,8 @@ def notes():
         rows = conn.execute(
             "SELECT * FROM notes WHERE user_id=? ORDER BY id DESC",
             (user["id"],)).fetchall()
-        return render_template("notes.html", user=user, rows=[dict(r) for r in rows])
+        return render_template("notes.html", user=user,
+                               rows=[dict(r) for r in rows], edit_note=None)
     finally:
         conn.close()
 
