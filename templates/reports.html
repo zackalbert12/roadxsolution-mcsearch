@@ -9,6 +9,13 @@
   <div class="stat"><div class="label">Qualification Rate</div><div class="value orange">{{ rate }}%</div><div class="hint">out of every 100 checked</div></div>
   <div class="stat"><div class="label">Saved MCs</div><div class="value">{{ saved }}</div><div class="hint">starred by you</div></div>
 </div>
+{% if chart_svg %}
+<div class="card">
+  <h2>Scans per day — last 14 days</h2>
+  <p class="muted">Blue bars: MCs scanned. Green bars: qualified. Red line: qualification rate.</p>
+  <div style="overflow-x:auto">{{ chart_svg|safe }}</div>
+</div>
+{% endif %}
 <div class="grid cols-2">
   <div class="card">
     <h2>Cargo tallies</h2>

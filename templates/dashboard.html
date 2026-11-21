@@ -80,18 +80,18 @@
   </table></div>
 </div>
 
+<div class="card">
+  <h2>Smart Pickup Line</h2>
+  <p class="muted">Say this when a carrier answers the phone. Line {{ pickup_idx }} of {{ pickup_total }} — changes daily.</p>
+  {% if pickup_category %}<p><span class="pill green">{{ pickup_category }}</span></p>{% endif %}
+  <p class="line-card" id="pickup-line">{{ pickup_line }}</p>
+  <button class="btn secondary small" type="button" id="copy-line-btn" data-line="{{ pickup_line }}">Copy Line</button>
+  <a class="btn secondary small" href="{{ url_for('dashboard', pickup=pickup_next) }}">Get Another Line</a>
+  <a class="btn secondary small" href="{{ url_for('pickup_lines') }}">All Pickup Lines</a>
+</div>
+<script src="{{ url_for('static', filename='pickup_line.js') }}"></script>
+
 <script>
-const LINES = [
-  "Hi, this is Zack from RoadxSolutions — are you set for next week, or do you need a load for Monday?",
-  "Good morning — do you need a load for today? Send me the zip where your truck is empty and I'll check what's around.",
-  "Quick question — where will your truck be empty on Monday morning? I'll line up loads so you don't start the week sitting.",
-  "Hi, this is Zack. I have reefer freight moving this week — is your reefer empty, and where?",
-  "Hi — got fresh produce loads posting. Is your truck free for a produce run?",
-  "Hi, this is Zack from RoadxSolutions. We find loads for carriers before they even hit the load boards — do you have a truck running right now?"
-];
-let li = 0;
-function anotherLine(){ li = (li + 1) % LINES.length; document.getElementById('pickup-line').textContent = LINES[li]; }
-function copyLine(){ navigator.clipboard.writeText(document.getElementById('pickup-line').textContent); }
 function fmt(s){ s = Math.max(0, Math.floor(s||0)); return String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0'); }
 function esc(v){ return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function pill(status){

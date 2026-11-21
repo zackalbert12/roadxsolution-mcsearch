@@ -5,16 +5,12 @@
 <p>Pick a truck type and see the commodities it hauls — tap a commodity to see the qualified carriers that haul it.</p>
 <p class="next">What to do: choose a truck below, then tap any commodity to open those carriers.</p></div>
 <div class="card">
-  <form method="get" class="form-row">
-    <div style="flex:1;min-width:220px"><label>Truck type</label>
-      <select name="equipment">
-        <option value="" {% if not equipment %}selected{% endif %}>All trucks</option>
-        {% for eq in equipment_list %}
-        <option value="{{ eq }}" {% if equipment==eq %}selected{% endif %}>{{ eq }}</option>
-        {% endfor %}
-      </select></div>
-    <div><label>&nbsp;</label><button class="btn" type="submit">Show commodities</button></div>
-  </form>
+  <p>
+    <a class="btn {% if equipment %}secondary{% endif %} small" href="{{ url_for('cargo_guide') }}" style="margin:2px">All trucks</a>
+    {% for eq in equipment_list %}
+    <a class="btn {% if equipment!=eq %}secondary{% endif %} small" href="{{ url_for('cargo_guide', equipment=eq) }}" style="margin:2px">{{ eq }}</a>
+    {% endfor %}
+  </p>
 </div>
 {% if equipment %}
 <div class="card">

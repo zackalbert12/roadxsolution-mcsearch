@@ -57,9 +57,9 @@
 
 <div class="card">
   <h2>Signed-up Users ({{ users|length }})</h2>
-  <p class="muted">To help a user who forgot their password, type a new password in their row and press Set — then tell them the new password. New signups start on a 7-day Demo trial. Press Access to set how long someone's access lasts — Demo (7 days), 1 month, 6 months, 1 year, Lifetime, or a custom number of months; the timer starts the moment you pick. Press Block to end someone's access at once — their data and plan stay untouched, and Unblock restores them.</p>
+  <p class="muted">To help a user who forgot their password, type a new password in their row and press Set — then tell them the new password. New signups start on a 7-day Demo trial. Press Access to set how long someone's access lasts — Demo (7 days), 1 month, 6 months, 1 year, Lifetime, or a custom number of months; the timer starts the moment you pick. Press Make Lifetime to give someone Lifetime access at once. Press Block to end someone's access at once — their data and plan stay untouched, and Unblock restores them.</p>
   <div class="table-wrap"><table>
-    <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Admin</th><th>Plan</th><th>Access ends</th><th>Signed Up</th><th>Last Login</th><th>Logins</th><th>Set Password</th><th>Access</th><th>Block</th></tr></thead>
+    <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Admin</th><th>Plan</th><th>Access ends</th><th>Signed Up</th><th>Last Login</th><th>Logins</th><th>Set Password</th><th>Access</th><th>Lifetime</th><th>Block</th></tr></thead>
     <tbody>
     {% for u in users %}
       <tr>
@@ -78,6 +78,16 @@
         <td>
           {% if not u.is_admin %}
           <button class="btn small access-btn" type="button" data-user-id="{{ u.id }}" data-username="{{ u.username }}" data-plan="{{ u.plan }}" data-access-ends="{{ u.access_ends }}">Access</button>
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if not u.is_admin and u.plan != 'Lifetime' %}
+          <form method="post" action="{{ url_for('admin_set_plan') }}" style="display:flex;gap:6px">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="user_id" value="{{ u.id }}">
+            <input type="hidden" name="plan" value="Lifetime">
+            <button class="btn small" type="submit">Make Lifetime</button>
+          </form>
           {% else %}—{% endif %}
         </td>
         <td>
