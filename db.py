@@ -196,6 +196,23 @@ CREATE TABLE IF NOT EXISTS otp_failures (
     fails INTEGER NOT NULL DEFAULT 0,
     updated_at REAL NOT NULL
 );
+-- Signup email verification: a new account is created ONLY after the
+-- user proves they own the email with a 6-digit code. The pending
+-- signup (username + hashed password) lives here until verified — no
+-- user row exists before then. Codes are stored HASHED, 10-minute
+-- expiry, single-use; only the newest live code per email works.
+CREATE TABLE IF NOT EXISTS pending_signups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    username TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    remember INTEGER NOT NULL DEFAULT 0,
+    code_hash TEXT NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_signups_email ON pending_signups(email);
 -- Demo auto-close blocklist: emails of auto-closed Demo accounts may
 -- never sign up again. Self-service delete does NOT blocklist, and
 -- admin manual creation bypasses the blocklist.

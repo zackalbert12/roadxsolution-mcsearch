@@ -42,6 +42,23 @@
       </form>
       <p style="text-align:center;margin-top:10px"><a href="{{ url_for('login_otp') }}">Request a new code</a> · <a href="{{ url_for('login') }}">Back to password sign in</a></p>
     </div>
+    {% elif signup_verify %}
+    <div id="pane-signup-verify">
+      <p style="text-align:center"><b>Verify your email</b><br><span class="muted">We emailed a 6-digit code{% if signup_email %} to <b>{{ signup_email }}</b>{% endif %}. It expires in 10 minutes.</span></p>
+      <form method="post" action="{{ url_for('signup_verify') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="email" value="{{ signup_email }}">
+        <label>Verification code</label>
+        <input type="text" name="code" placeholder="123456" required maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Verify &amp; Create Account</button></div>
+      </form>
+      <form method="post" action="{{ url_for('signup_verify_resend') }}" style="margin-top:10px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="email" value="{{ signup_email }}">
+        <div style="text-align:center"><button class="btn secondary" type="submit">Send a new code</button></div>
+      </form>
+      <p style="text-align:center;margin-top:10px"><a href="{{ url_for('login') }}">Back to sign up</a></p>
+    </div>
     {% else %}
     <div class="tabs">
       <button id="tab-login" class="active" onclick="showTab('login')">Log In</button>
@@ -74,6 +91,7 @@
         <label class="checkbox" style="margin-top:12px"><input type="checkbox" name="remember" value="1" checked> Remember me</label>
         <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Create Account</button></div>
       </form>
+      <p class="muted" style="text-align:center;margin-top:12px">We will email a 6-digit code to verify your email before your account is created.</p>
       <p class="muted" style="text-align:center;margin-top:12px">Signing up starts a $0 for 1 month trial with full access. Ask owner for access to lifetime feature. Contact the owner: {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a> · zackalbert.dispatch@gmail.com.</p>
     </div>
     {% endif %}

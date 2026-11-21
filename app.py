@@ -261,15 +261,28 @@ OTP_VERIFY_WINDOW = 900       # lockout window for OTP-code guesses
 OTP_NOT_CONFIGURED_MESSAGE = ("Email login is not set up yet — ask the site "
                               "owner to configure email sending, or sign in "
                               "with your password.")
+# Zack 2026-11-21 22:41: the 6-digit codes (signup verification AND
+# login OTP) are sent FROM zackalbert.dispatch@gmail.com — never any
+# other address. The sender is fixed here, not an env override: the
+# SMTP credentials for this Gmail arrive at deploy time, and Gmail
+# only delivers mail whose From matches the authenticated account.
+# SMTP_FROM is intentionally NOT read — a stray env value must never
+# change where the codes come from.
+CODE_SENDER_EMAIL = "zackalbert.dispatch@gmail.com"
+SIGNUP_VERIFY_NOT_CONFIGURED_MESSAGE = ("Email verification is not set up "
+    "yet — ask the site owner to configure email sending, or try again "
+    "later.")
 
 
 def _smtp_config():
-    """SMTP settings from the environment, or None when not configured."""
+    """SMTP settings from the environment, or None when not configured.
+    The sender is always CODE_SENDER_EMAIL (see above) — SMTP_FROM is
+    not read, so a deploy-time env value can never change it."""
     host = (os.environ.get("SMTP_HOST") or "").strip()
     port = os.environ.get("SMTP_PORT") or "587"
     user = (os.environ.get("SMTP_USER") or "").strip()
     password = os.environ.get("SMTP_PASS") or ""
-    sender = (os.environ.get("SMTP_FROM") or "").strip() or user
+    sender = CODE_SENDER_EMAIL
     if not host or not user or not password:
         return None
     try:
@@ -309,6 +322,39 @@ def _send_login_otp_email(to_email, code):
     except Exception:
         return (False, "Could not send the login code right now. Try again "
                        "later, or sign in with your password.")
+    return (True, None)
+
+
+def _send_signup_verify_email(to_email, code):
+    """Send the 6-digit signup verification code. Returns (True, None)
+    on success, (False, message) when email is not configured or
+    sending fails. The code is never logged."""
+    cfg = _smtp_config()
+    if cfg is None:
+        return (False, SIGNUP_VERIFY_NOT_CONFIGURED_MESSAGE)
+    msg = EmailMessage()
+    msg["Subject"] = "Your RoadxSolutions signup code"
+    msg["From"] = cfg["from"]
+    msg["To"] = to_email
+    msg.set_content(
+        "Your RoadxSolutions signup verification code is: %s\n\n"
+        "Enter it to finish creating your account. It expires in %d "
+        "minutes and can be used once. If you did not request this "
+        "code, ignore this email.\n"
+        % (code, OTP_EXPIRY_MINUTES))
+    try:
+        with smtplib.SMTP(cfg["host"], cfg["port"], timeout=15) as smtp:
+            smtp.ehlo()
+            try:
+                smtp.starttls()
+                smtp.ehlo()
+            except smtplib.SMTPException:
+                pass  # plain SMTP relay (e.g. local) — continue without TLS
+            smtp.login(cfg["user"], cfg["password"])
+            smtp.send_message(msg)
+    except Exception:
+        return (False, "Could not send the verification code right now. "
+                       "Try again later.")
     return (True, None)
 
 
@@ -470,6 +516,7 @@ def _close_expired_demo_accounts():
     (a wrong-password attempt must not delete anything)."""
     if request.endpoint in ("login", "login_totp", "login_otp",
                             "login_otp_request", "login_otp_verify",
+                            "signup_verify", "signup_verify_resend",
                             "forgot", "reset_password", "static"):
         return None
     if not session.get("user_id"):
@@ -1402,28 +1449,56 @@ def login():
                                   (email, username)).fetchone():
                     error = "An account with this email or username already exists. Try logging in instead."
                 else:
-                    # C1: signup NEVER creates an admin. The admin account
-                    # comes only from ROAD_ADMIN_EMAIL / ROAD_ADMIN_PASSWORD.
-                    # A new signup is a 7-day demo trial (plan 'Demo');
-                    # only the admin can give Lifetime access.
-                    # Audit fix 4: the existence check above and this
-                    # INSERT can race on a double-click — catch the
-                    # UNIQUE violation instead of 500'ing.
-                    try:
-                        conn.execute(
-                            "INSERT INTO users (email, username, password_hash, is_admin,"
-                            " plan, created_at) VALUES (?,?,?,?,?,?)",
-                            (email, username, generate_password_hash(password),
-                             0, "Demo", now_str()))
+                    # Signup email verification (Zack 2026-11-21): the
+                    # account is created ONLY after the user proves
+                    # they own the email with a 6-digit code. No user
+                    # row exists until then — the pending signup
+                    # (username + hashed password) lives server-side
+                    # in pending_signups, and the final creation step
+                    # reads it from there, never from client data.
+                    # C1: signup NEVER creates an admin. The admin
+                    # account comes only from ROAD_ADMIN_EMAIL /
+                    # ROAD_ADMIN_PASSWORD. A new signup is a 7-day
+                    # demo trial (plan 'Demo'); only the admin can
+                    # give Lifetime access.
+                    if _rate_limited(("signup-verify-request", email),
+                                     OTP_MAX_REQUESTS, OTP_REQUEST_WINDOW):
+                        error = ("Too many code requests for this email. "
+                                 "Try again later.")
+                        return render_template("login.html", error=error), 429
+                    code = "%06d" % secrets.randbelow(1000000)
+                    expires = (datetime.now()
+                               + timedelta(minutes=OTP_EXPIRY_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+                    conn.execute("UPDATE pending_signups SET used=1"
+                                 " WHERE email=? AND used=0", (email,))
+                    conn.execute(
+                        "INSERT INTO pending_signups (email, username,"
+                        " password_hash, remember, code_hash, used,"
+                        " created_at, expires_at) VALUES (?,?,?,?,?,?,?,?)",
+                        (email, username, generate_password_hash(password),
+                         1 if request.form.get("remember") else 0,
+                         generate_password_hash(code), 0, now_str(), expires))
+                    conn.commit()
+                    _otp_fails_clear(email)  # a fresh code restarts the guess budget
+                    ok, send_error = _send_signup_verify_email(email, code)
+                    if not ok:
+                        # The pending row is already stored; without a
+                        # sent email its code can never be used (it
+                        # expires in 10 minutes) — but drop it anyway
+                        # so a later misconfiguration cannot leak a
+                        # live code.
+                        conn.execute("UPDATE pending_signups SET used=1"
+                                     " WHERE email=? AND used=0", (email,))
                         conn.commit()
-                    except sqlite3.IntegrityError:
-                        conn.rollback()
-                        error = "An account with this email or username already exists. Try logging in instead."
+                        error = send_error
                     else:
-                        user = conn.execute(
-                            "SELECT * FROM users WHERE email=?", (email,)).fetchone()
-                        _login_user(user, request.form.get("remember"))
-                        return redirect(url_for("dashboard"))
+                        return render_template(
+                            "login.html", error="",
+                            message=("We emailed a 6-digit verification code "
+                                     "to %s. Enter it below to finish creating "
+                                     "your account. It expires in %d minutes."
+                                     % (email, OTP_EXPIRY_MINUTES)),
+                            signup_verify=True, signup_email=email)
             else:
                 ident = (request.form.get("identifier") or "").strip()
                 password = request.form.get("password") or ""
@@ -1720,6 +1795,196 @@ def login_otp_verify():
     _log_admin_action(None, user["id"], "otp_login")
     _login_user(user, False)
     return redirect(url_for("dashboard"))
+
+
+@app.route("/signup/verify", methods=["POST"])
+def signup_verify():
+    """Signup email verification, step 2: check the 6-digit code and
+    create the account.
+
+    The pending signup (username + hashed password) is read from the
+    server-side pending_signups row — never from client data. Wrong
+    codes share the login rate-limit budget (like login_otp_verify)
+    and the per-email guess budget (5 per 15 min); after 5 wrong
+    guesses the live code is cancelled. A correct code is single-use.
+    The account is created as a 7-day Demo trial, exactly as signup
+    did before verification existed."""
+    if current_user():
+        return redirect(url_for("dashboard"))
+    if _rate_limited(("login", request.remote_addr), 5, 60) or \
+            _rate_limited(("login-h", request.remote_addr), 20, 3600):
+        error = "Too many login attempts from this address. Try again later."
+        return render_template("login.html", error=error,
+                               signup_verify=True,
+                               signup_email=request.form.get("email") or ""), 429
+    # A half-finished 2FA step from an earlier attempt must not linger.
+    session.pop("totp_user_id", None)
+    session.pop("totp_remember", None)
+    email = (request.form.get("email") or "").strip().lower()[:254]
+    code = (request.form.get("code") or "").strip()
+    if _rate_limited(("otp-verify", email), OTP_MAX_ATTEMPTS,
+                     OTP_VERIFY_WINDOW):
+        error = "Too many code attempts for this email. Try again later."
+        return render_template("login.html", error=error,
+                               signup_verify=True, signup_email=email), 429
+    conn = store.connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM pending_signups WHERE email=? AND used=0"
+            " ORDER BY id DESC LIMIT 1", (email,)).fetchone()
+        if not row:
+            fails = _otp_fails_inc(email)
+            cancelled = False
+            if fails >= OTP_MAX_ATTEMPTS:
+                conn.execute("UPDATE pending_signups SET used=1"
+                             " WHERE email=? AND used=0", (email,))
+                _otp_fails_clear(email)
+                cancelled = True
+            conn.execute(
+                "INSERT INTO login_events (user_id, identifier, success,"
+                " ip, created_at) VALUES (?,?,?,?,?)",
+                (None, email, 0, request.remote_addr, now_str()))
+            conn.commit()
+            error = ("Too many wrong codes — this code was cancelled. "
+                     "Request a new one.") if cancelled else \
+                    "Invalid or expired code. Request a new one."
+            return render_template("login.html", error=error,
+                                   signup_verify=True, signup_email=email)
+        if row["expires_at"] < now_str():
+            _otp_fails_clear(email)
+            conn.execute(
+                "INSERT INTO login_events (user_id, identifier, success,"
+                " ip, created_at) VALUES (?,?,?,?,?)",
+                (None, email, 0, request.remote_addr, now_str()))
+            conn.commit()
+            return render_template("login.html",
+                                   error="That code has expired. Request a new one.",
+                                   signup_verify=True, signup_email=email)
+        if not check_password_hash(row["code_hash"], code):
+            fails = _otp_fails_inc(email)
+            conn.execute(
+                "INSERT INTO login_events (user_id, identifier, success,"
+                " ip, created_at) VALUES (?,?,?,?,?)",
+                (None, email, 0, request.remote_addr, now_str()))
+            if fails >= OTP_MAX_ATTEMPTS:
+                conn.execute("UPDATE pending_signups SET used=1"
+                             " WHERE email=? AND used=0", (email,))
+                conn.commit()
+                _otp_fails_clear(email)
+                error = ("Too many wrong codes — this code was cancelled. "
+                         "Request a new one.")
+            else:
+                conn.commit()
+                error = "Invalid code. Try again."
+            return render_template("login.html", error=error,
+                                   signup_verify=True, signup_email=email)
+        # Code is right: single-use, then create the account from the
+        # server-side pending row.
+        conn.execute("UPDATE pending_signups SET used=1 WHERE id=?", (row["id"],))
+        conn.commit()
+        _otp_fails_clear(email)
+        pending = dict(row)
+    finally:
+        conn.close()
+    # Re-check the guards at creation time (a parallel signup or an
+    # admin action could have changed things since the code was sent).
+    conn = store.connect()
+    try:
+        if conn.execute("SELECT email FROM closed_demos WHERE email=?",
+                        (pending["email"],)).fetchone():
+            return render_template("login.html", error=DEMO_BLOCKED_MESSAGE)
+        if conn.execute("SELECT id FROM users WHERE email=? OR username=?",
+                        (pending["email"], pending["username"])).fetchone():
+            return render_template(
+                "login.html",
+                error="An account with this email or username already exists. Try logging in instead.")
+        # Audit fix 4 (same race as the old signup INSERT): the
+        # existence check above and this INSERT can race on a
+        # double-click — catch the UNIQUE violation instead of 500'ing.
+        try:
+            conn.execute(
+                "INSERT INTO users (email, username, password_hash, is_admin,"
+                " plan, created_at) VALUES (?,?,?,?,?,?)",
+                (pending["email"], pending["username"],
+                 pending["password_hash"], 0, "Demo", now_str()))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            return render_template(
+                "login.html",
+                error="An account with this email or username already exists. Try logging in instead.")
+        user = conn.execute(
+            "SELECT * FROM users WHERE email=?", (pending["email"],)).fetchone()
+        conn.execute(
+            "INSERT INTO login_events (user_id, identifier, success, ip,"
+            " created_at) VALUES (?,?,?,?,?)",
+            (user["id"], pending["email"], 1, request.remote_addr, now_str()))
+        conn.commit()
+    finally:
+        conn.close()
+    _log_admin_action(None, user["id"], "signup_verified")
+    _login_user(user, bool(pending["remember"]))
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/signup/verify/resend", methods=["POST"])
+def signup_verify_resend():
+    """Send a fresh verification code for a pending signup (same
+    username/password, new code). Counts against the same per-email
+    request budget as the first code (5 per 15 min)."""
+    if current_user():
+        return redirect(url_for("dashboard"))
+    session.pop("totp_user_id", None)
+    session.pop("totp_remember", None)
+    email = (request.form.get("email") or "").strip().lower()[:254]
+    if _rate_limited(("signup-verify-request", email),
+                     OTP_MAX_REQUESTS, OTP_REQUEST_WINDOW):
+        return render_template(
+            "login.html",
+            error="Too many code requests for this email. Try again later.",
+            signup_verify=True, signup_email=email), 429
+    conn = store.connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM pending_signups WHERE email=? AND used=0"
+            " ORDER BY id DESC LIMIT 1", (email,)).fetchone()
+        if not row:
+            return render_template(
+                "login.html",
+                error="No pending signup for this email. Sign up again.",
+                signup_verify=True, signup_email=email)
+        code = "%06d" % secrets.randbelow(1000000)
+        expires = (datetime.now()
+                   + timedelta(minutes=OTP_EXPIRY_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute("UPDATE pending_signups SET used=1"
+                     " WHERE email=? AND used=0", (email,))
+        conn.execute(
+            "INSERT INTO pending_signups (email, username, password_hash,"
+            " remember, code_hash, used, created_at, expires_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (row["email"], row["username"], row["password_hash"],
+             row["remember"], generate_password_hash(code), 0,
+             now_str(), expires))
+        conn.commit()
+        _otp_fails_clear(email)
+    finally:
+        conn.close()
+    ok, send_error = _send_signup_verify_email(email, code)
+    if not ok:
+        conn = store.connect()
+        try:
+            conn.execute("UPDATE pending_signups SET used=1"
+                         " WHERE email=? AND used=0", (email,))
+            conn.commit()
+        finally:
+            conn.close()
+        return render_template("login.html", error=send_error,
+                               signup_verify=True, signup_email=email)
+    return render_template(
+        "login.html", error="",
+        message=("A new 6-digit verification code was emailed to %s. "
+                 "It expires in %d minutes." % (email, OTP_EXPIRY_MINUTES)),
+        signup_verify=True, signup_email=email)
 
 
 @app.route("/logout")
