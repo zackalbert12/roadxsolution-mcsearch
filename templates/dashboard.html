@@ -55,36 +55,18 @@
 </div>
 <p class="muted" style="margin:-6px 0 18px">Qualified = authorised carriers with matching cargo — these are the ones to call. Not Found = no SAFER record for that MC. Errors = the check failed, try again later.</p>
 
-<div class="grid cols-2">
-  <div class="card">
-    <h2>Live Log — Showing latest 25</h2>
-    <div class="table-wrap"><table>
-      <thead><tr><th>MC</th><th>Status</th><th>Entity</th><th>PU</th><th>Cargo</th><th>Checked At</th><th>Note</th></tr></thead>
-      <tbody id="log-body">
-        {% for r in log %}
-        <tr><td>MC-{{ r.mc_number }}</td><td>{{ r.status }}</td><td>{{ r.entity }}</td><td>{{ r.power_units }}</td><td>{{ r.cargo }}</td><td>{{ r.checked_at }}</td><td>{{ r.note }}</td></tr>
-        {% else %}
-        <tr><td colspan="7" class="empty">No checks yet — start a scan above and the results will show up here, newest first.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table></div>
-  </div>
-  <div>
-    <div class="card">
-      <h2>Cargo Type Guide</h2>
-      <p><span class="pill green">Fresh</span> Perishable goods — fresh produce</p>
-      <p><span class="pill blue">Reefer</span> Temperature controlled — refrigerated food</p>
-      <p><span class="pill orange">General Freight</span> Dry / general cargo</p>
-      <p class="muted">Scanner checks: General Freight, Fresh Produce, Refrigerated Food (change in Settings → Scanner).</p>
-    </div>
-    <div class="card">
-      <h2>Smart Pickup Line</h2>
-      <p class="muted">Say this when a carrier answers the phone.</p>
-      <p class="line-card" id="pickup-line">Hi, this is Zack from RoadxSolution — are you set for next week, or do you need a load for Monday?</p>
-      <button class="btn secondary small" onclick="copyLine()">Copy Line</button>
-      <button class="btn secondary small" onclick="anotherLine()">Get Another Line</button>
-    </div>
-  </div>
+<div class="card">
+  <h2>Live Log — Showing latest 25</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>MC</th><th>Status</th><th>Entity</th><th>PU</th><th>Cargo</th><th>Checked At</th><th>Note</th></tr></thead>
+    <tbody id="log-body">
+      {% for r in log %}
+      <tr><td>MC-{{ r.mc_number }}</td><td>{{ r.status }}</td><td>{{ r.entity }}</td><td>{{ r.power_units }}</td><td>{{ r.cargo }}</td><td>{{ r.checked_at }}</td><td>{{ r.note }}</td></tr>
+      {% else %}
+      <tr><td colspan="7" class="empty">No checks yet — start a scan above and the results will show up here, newest first.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table></div>
 </div>
 
 <script>
