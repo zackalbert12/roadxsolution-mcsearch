@@ -7,6 +7,18 @@
     <p style="text-align:center">Sign in to your dispatcher workspace</p>
     <p class="muted" style="text-align:center">Log in to scan MC numbers and see your carriers. New here? Press Sign Up below.</p>
     {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+    {% if totp_required %}
+    <div id="pane-totp">
+      <p style="text-align:center"><b>Two-factor authentication</b><br><span class="muted">Enter the 6-digit code from your authenticator app{% if totp_username %} for <b>{{ totp_username }}</b>{% endif %}.</span></p>
+      <form method="post" action="{{ url_for('login_totp') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label>Verification code</label>
+        <input type="text" name="totp_code" placeholder="123456" required maxlength="6" inputmode="numeric" autocomplete="one-time-code">
+        <div style="margin-top:16px"><button class="btn" style="width:100%" type="submit">Verify &amp; Sign In</button></div>
+      </form>
+      <p style="text-align:center;margin-top:10px"><a href="{{ url_for('login') }}">Back to sign in</a></p>
+    </div>
+    {% else %}
     <div class="tabs">
       <button id="tab-login" class="active" onclick="showTab('login')">Log In</button>
       <button id="tab-signup" onclick="showTab('signup')">Sign Up</button>
@@ -39,6 +51,7 @@
       </form>
       <p class="muted" style="text-align:center;margin-top:12px">Signing up starts a free 7-day demo trial with full access. For Lifetime access, ask the site admin.</p>
     </div>
+    {% endif %}
   </div>
 </div>
 <script>

@@ -202,6 +202,11 @@ def init_db():
         if "session_version" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN"
                          " session_version INTEGER NOT NULL DEFAULT 0")
+        # Migration for opt-in TOTP 2FA (admin only): NULL = 2FA off.
+        # The secret is stored only after the admin confirms setup with
+        # a code; an unconfirmed secret never reaches the database.
+        if "totp_secret" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN totp_secret TEXT")
         conn.commit()
     finally:
         conn.close()

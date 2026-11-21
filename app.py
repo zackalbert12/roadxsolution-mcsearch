@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import sqlite3
+import string
 import threading
 import time
 from datetime import datetime, timedelta
@@ -24,6 +25,14 @@ from flask import (
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import generate_password_hash, check_password_hash
+
+# pyotp is in requirements.txt. Guard the import so a stale environment
+# without it still boots — the 2FA routes refuse with a clear message
+# instead of crashing the whole app.
+try:
+    import pyotp
+except ImportError:  # pragma: no cover - missing dependency
+    pyotp = None
 
 import db as store
 from safer import check_mc, check_usdot, search_by_name, fetch_company_officer
@@ -129,6 +138,51 @@ def _demo_expired_for(user_id):
 # ---------------------------------------------------------------- security
 
 MIN_PASSWORD_LEN = 8
+# Password strength (already enforced everywhere a password is set):
+# signup, /reset, Settings change-password, admin set-password and
+# admin create-user all require MIN_PASSWORD_LEN–128 characters.
+# The admin's own password comes from the ROAD_ADMIN_PASSWORD env var
+# and is never checked or changed here.
+
+DEMO_PASSWORD_LEN = 16
+
+
+def _random_demo_password():
+    """Cryptographically random demo password (letters + digits).
+
+    Used when the admin creates a demo account without typing a
+    password — every demo account then gets its own password instead
+    of sharing one known one. Only the hash is stored; the plaintext
+    is shown to the admin once, right after creation."""
+    alphabet = string.ascii_letters + string.digits
+    while True:
+        pw = "".join(secrets.choice(alphabet)
+                     for _ in range(DEMO_PASSWORD_LEN))
+        if (any(c.isalpha() for c in pw)
+                and any(c.isdigit() for c in pw)):
+            return pw
+
+
+def _totp_enabled(user):
+    """True when opt-in TOTP 2FA is enabled for this user (admin only).
+    The secret lives in users.totp_secret; NULL means 2FA is off."""
+    return bool(user and user["totp_secret"])
+
+
+def _totp_verify(secret, code):
+    """Verify a 6-digit TOTP code against a base32 secret. valid_window=1
+    allows one 30 s step of clock skew either way. Returns False when
+    pyotp is unavailable (fail closed) or the code is malformed."""
+    if not pyotp or not secret:
+        return False
+    code = (code or "").strip()
+    if len(code) != 6 or not code.isdigit():
+        return False
+    try:
+        return bool(pyotp.TOTP(secret).verify(code, valid_window=1))
+    except Exception:
+        return False
+
 
 # --- rate limiting (H1/H2): counters live in SQLite (rate_limit_events /
 # reset_failures tables, db.py) so the 2 gunicorn workers share ONE
@@ -1141,10 +1195,29 @@ def login():
             else:
                 ident = (request.form.get("identifier") or "").strip()
                 password = request.form.get("password") or ""
+                # A half-finished 2FA step from an earlier attempt must
+                # not linger into this login.
+                session.pop("totp_user_id", None)
+                session.pop("totp_remember", None)
                 user = conn.execute(
                     "SELECT * FROM users WHERE email=? OR username=?",
                     (ident.lower(), ident)).fetchone()
                 ok = bool(user and check_password_hash(user["password_hash"], password))
+                if ok and _totp_enabled(user):
+                    # Password is right, but 2FA is on for this account:
+                    # hold the login at the second step. No login event
+                    # or last-login update yet — those happen in
+                    # login_totp once the code checks out.
+                    if pyotp is None:
+                        error = ("Two-factor verification is unavailable"
+                                 " right now. Try again later.")
+                    else:
+                        session["totp_user_id"] = user["id"]
+                        session["totp_remember"] = bool(request.form.get("remember"))
+                        return render_template("login.html", error="",
+                                               totp_required=True,
+                                               totp_username=user["username"])
+                    return render_template("login.html", error=error)
                 conn.execute(
                     "INSERT INTO login_events (user_id, identifier, success, ip,"
                     " created_at) VALUES (?,?,?,?,?)",
@@ -1162,6 +1235,58 @@ def login():
         finally:
             conn.close()
     return render_template("login.html", error=error)
+
+
+@app.route("/login/totp", methods=["POST"])
+def login_totp():
+    """Second login step for accounts with 2FA enabled.
+
+    Reached only after the password step succeeded (session holds
+    totp_user_id). Wrong codes share the login rate-limit budget
+    (5/min, 20/hour per IP) and are logged as failed logins, exactly
+    like wrong passwords."""
+    if _rate_limited(("login", request.remote_addr), 5, 60) or \
+            _rate_limited(("login-h", request.remote_addr), 20, 3600):
+        error = "Too many login attempts from this address. Try again later."
+        return render_template("login.html", error=error,
+                               totp_required=True), 429
+    uid = session.get("totp_user_id")
+    if not uid:
+        return redirect(url_for("login"))
+    conn = store.connect()
+    try:
+        user = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        if not user or not _totp_enabled(user):
+            session.pop("totp_user_id", None)
+            session.pop("totp_remember", None)
+            return redirect(url_for("login"))
+        code = request.form.get("totp_code") or ""
+        if pyotp is None or not _totp_verify(user["totp_secret"], code):
+            conn.execute(
+                "INSERT INTO login_events (user_id, identifier, success, ip,"
+                " created_at) VALUES (?,?,?,?,?)",
+                (user["id"], user["username"], 0,
+                 request.remote_addr, now_str()))
+            conn.commit()
+            return render_template("login.html",
+                                   error="Invalid verification code. Try again.",
+                                   totp_required=True,
+                                   totp_username=user["username"])
+        conn.execute(
+            "INSERT INTO login_events (user_id, identifier, success, ip,"
+            " created_at) VALUES (?,?,?,?,?)",
+            (user["id"], user["username"], 1,
+             request.remote_addr, now_str()))
+        conn.execute(
+            "UPDATE users SET last_login=?, login_count=login_count+1"
+            " WHERE id=?", (now_str(), user["id"]))
+        conn.commit()
+        remember = session.pop("totp_remember", None)
+        session.pop("totp_user_id", None)
+        _login_user(user, remember)
+        return redirect(url_for("dashboard"))
+    finally:
+        conn.close()
 
 
 @app.route("/logout")
@@ -2156,11 +2281,23 @@ def admin_page():
             " LEFT JOIN users u ON u.id=a.admin_id"
             " LEFT JOIN users t ON t.id=a.target_user_id"
             " ORDER BY a.id DESC LIMIT 20").fetchall()
+        # Opt-in TOTP 2FA (admin only, off by default). A pending setup
+        # secret lives in the session until the admin confirms it with
+        # a code — it is never written to the database unconfirmed.
+        totp_enabled = _totp_enabled(user)
+        totp_pending = session.get("totp_pending")
+        totp_uri = None
+        if totp_pending and pyotp:
+            totp_uri = pyotp.TOTP(totp_pending).provisioning_uri(
+                name=user["email"], issuer_name="RoadxSolution")
         return render_template("admin.html", user=user,
                                users=[dict(r) for r in users],
                                events=[dict(r) for r in events],
                                resets=[dict(r) for r in resets],
-                               audit=[dict(r) for r in audit])
+                               audit=[dict(r) for r in audit],
+                               totp_enabled=totp_enabled,
+                               totp_pending=totp_pending,
+                               totp_uri=totp_uri)
     finally:
         conn.close()
 
@@ -2242,11 +2379,20 @@ def admin_create_user():
     """Create a demo account for one person — same rules as signup.
 
     The account is always plan 'Demo' (a 7-day full trial) and never an
-    admin. The admin shares the login with the person afterwards."""
+    admin. If the admin leaves the password blank, a random 16-character
+    password is generated so demo accounts never share one known
+    password — it is shown to the admin ONCE in the flash message below
+    (only its hash is stored), so the admin can share it with the
+    person right away. A typed password still works, with the same
+    8–128 character rule as everywhere else."""
     admin = current_user()
     email = (request.form.get("email") or "").strip().lower()[:254]
     username = (request.form.get("username") or "").strip()[:50]
     password = request.form.get("password") or ""
+    generated = False
+    if not password:
+        password = _random_demo_password()
+        generated = True
     if not email or not username or \
             len(password) < MIN_PASSWORD_LEN or len(password) > 128:
         flash("Email, username and a password of %d–128 characters are"
@@ -2275,8 +2421,109 @@ def admin_create_user():
     finally:
         conn.close()
     _log_admin_action(admin["id"], new_id, "admin_create_demo_user")
-    flash("Demo account created for %s — share the login with them."
-          % username)
+    if generated:
+        # Shown once, on this redirect only — the password is never
+        # stored or displayed again. The admin shares it with the
+        # person now; afterwards only a reset can give them access.
+        flash("Demo account created for %s — password: %s (shown once —"
+              " share it with them now)." % (username, password))
+    else:
+        flash("Demo account created for %s — share the login with them."
+              % username)
+    return redirect(url_for("admin_page"))
+
+
+# ---------------------------------------------------------------- 2FA (TOTP)
+
+@app.route("/admin/2fa/setup", methods=["POST"])
+@admin_required
+def admin_2fa_setup():
+    """Start 2FA setup: generate a TOTP secret and hold it in the
+    session (NOT in the database) until the admin confirms it with a
+    code from their authenticator app. The secret + otpauth:// URL are
+    shown on the Admin page — the admin types the secret into their
+    authenticator app by hand (no QR image is generated)."""
+    admin = current_user()
+    if not admin["is_admin"]:
+        flash("Only the admin can use two-factor authentication.")
+        return redirect(url_for("admin_page"))
+    if _totp_enabled(admin):
+        flash("Two-factor authentication is already enabled.")
+        return redirect(url_for("admin_page"))
+    if pyotp is None:
+        flash("Two-factor authentication is not available right now.")
+        return redirect(url_for("admin_page"))
+    session["totp_pending"] = pyotp.random_base32()
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/2fa/confirm", methods=["POST"])
+@admin_required
+def admin_2fa_confirm():
+    """Confirm 2FA setup with a current 6-digit code. Only then is the
+    secret stored on the admin's account — an unconfirmed secret never
+    reaches the database, so a half-finished setup cannot lock anyone
+    out."""
+    admin = current_user()
+    if not admin["is_admin"]:
+        flash("Only the admin can use two-factor authentication.")
+        return redirect(url_for("admin_page"))
+    pending = session.get("totp_pending")
+    if not pending or pyotp is None:
+        flash("Start 2FA setup first.")
+        return redirect(url_for("admin_page"))
+    code = request.form.get("totp_code") or ""
+    if not _totp_verify(pending, code):
+        flash("That code did not match — check your authenticator app"
+              " and try again.")
+        return redirect(url_for("admin_page"))
+    conn = store.connect()
+    try:
+        conn.execute("UPDATE users SET totp_secret=? WHERE id=?",
+                     (pending, admin["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    session.pop("totp_pending", None)
+    _log_admin_action(admin["id"], admin["id"], "admin_2fa_enabled")
+    flash("Two-factor authentication enabled — your next sign-in will"
+          " ask for a code from your authenticator app.")
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/2fa/cancel", methods=["POST"])
+@admin_required
+def admin_2fa_cancel():
+    """Drop an unconfirmed 2FA setup — nothing was stored, so there is
+    nothing to undo."""
+    session.pop("totp_pending", None)
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/2fa/disable", methods=["POST"])
+@admin_required
+def admin_2fa_disable():
+    """Turn 2FA off. Requires the admin's own password as confirmation
+    — a stolen session alone must not be able to strip the second
+    factor. Existing sessions keep working (2FA gates sign-in, not
+    active sessions), so no session bump is needed here."""
+    admin = current_user()
+    if not admin["is_admin"]:
+        flash("Only the admin can use two-factor authentication.")
+        return redirect(url_for("admin_page"))
+    password = request.form.get("password") or ""
+    if not check_password_hash(admin["password_hash"], password):
+        flash("Password is incorrect — 2FA was not disabled.")
+        return redirect(url_for("admin_page"))
+    conn = store.connect()
+    try:
+        conn.execute("UPDATE users SET totp_secret=NULL WHERE id=?",
+                     (admin["id"],))
+        conn.commit()
+    finally:
+        conn.close()
+    _log_admin_action(admin["id"], admin["id"], "admin_2fa_disabled")
+    flash("Two-factor authentication disabled.")
     return redirect(url_for("admin_page"))
 
 

@@ -5,6 +5,42 @@
 <p>Only the site admin sees this page. See everyone who signed up, set a password for someone, create a demo account for one person, change a plan to Lifetime, and share reset codes.</p></div>
 
 <div class="card">
+  <h2>Two-Factor Authentication</h2>
+  {% if totp_enabled %}
+    <p><b>2FA is ON</b> for your admin account — sign-in asks for your password and a 6-digit code from your authenticator app.</p>
+    <form method="post" action="{{ url_for('admin_2fa_disable') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-row">
+        <div><label>Your password (to confirm)</label><input type="password" name="password" placeholder="Your password" required></div>
+        <div><button class="btn" type="submit">Disable 2FA</button></div>
+      </div>
+    </form>
+  {% elif totp_pending %}
+    <p><b>Setup started.</b> Add this account to your authenticator app (Google Authenticator, Authy, or similar) — type the secret in by hand, or paste the setup link:</p>
+    <p>Secret: <code>{{ totp_pending }}</code></p>
+    <p>Setup link: <code style="word-break:break-all">{{ totp_uri }}</code></p>
+    <form method="post" action="{{ url_for('admin_2fa_confirm') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-row">
+        <div><label>6-digit code from your app</label><input type="text" name="totp_code" placeholder="123456" required maxlength="6" inputmode="numeric" autocomplete="one-time-code"></div>
+        <div><button class="btn" type="submit">Confirm &amp; Enable 2FA</button></div>
+      </div>
+    </form>
+    <form method="post" action="{{ url_for('admin_2fa_cancel') }}" style="margin-top:8px">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn small" type="submit">Cancel setup</button>
+    </form>
+    <p class="muted">Nothing is saved until you confirm with a code — cancelling leaves 2FA off.</p>
+  {% else %}
+    <p class="muted">2FA is off. Turn it on and your admin sign-in will ask for a 6-digit code from your authenticator app as well as your password. Other users are not affected.</p>
+    <form method="post" action="{{ url_for('admin_2fa_setup') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn" type="submit">Enable 2FA</button>
+    </form>
+  {% endif %}
+</div>
+
+<div class="card">
   <h2>Create Demo Account</h2>
   <p class="muted">Make a separate demo account for one person — a free 7-day full trial. Only you can give Lifetime access. Tell the person their login afterwards.</p>
   <form method="post" action="{{ url_for('admin_create_user') }}">
@@ -12,10 +48,11 @@
     <div class="form-row">
       <div><label>Email</label><input type="email" name="email" placeholder="person@example.com" required></div>
       <div><label>Username</label><input type="text" name="username" placeholder="Pick a username" required></div>
-      <div><label>Password</label><input type="password" name="password" placeholder="At least 8 characters" required minlength="8"></div>
+      <div><label>Password</label><input type="password" name="password" placeholder="Leave blank for a random password" minlength="8"></div>
       <div><button class="btn" type="submit">Create Demo Account</button></div>
     </div>
   </form>
+  <p class="muted">Leave the password blank and a random 16-character password is generated and shown once — share it with the person right away, it is never shown again.</p>
 </div>
 
 <div class="card">
