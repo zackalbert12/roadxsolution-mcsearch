@@ -6,7 +6,7 @@ reports and admin user management. Deployable on Render's free tier.
 """
 import concurrent.futures
 import csv
-import hashlib
+import html
 import hmac
 import io
 import ipaddress
@@ -664,17 +664,6 @@ def _send_signup_verify_email(to_email, code):
     return (True, None)
 
 
-def _otp_fails(email):
-    """Failed OTP-code guesses recorded for `email` (shared count)."""
-    conn = store.connect()
-    try:
-        row = conn.execute("SELECT fails FROM otp_failures WHERE email=?",
-                           (email,)).fetchone()
-        return row[0] if row else 0
-    finally:
-        conn.close()
-
-
 def _otp_fails_inc(email):
     """Record one more failed OTP-code guess; returns the new total."""
     conn = store.connect()
@@ -733,17 +722,6 @@ def _rate_limited(key, limit, window):
                      (k, now))
         conn.commit()
         return False
-    finally:
-        conn.close()
-
-
-def _reset_fails(email):
-    """Failed reset-code guesses recorded for `email` (shared count)."""
-    conn = store.connect()
-    try:
-        row = conn.execute("SELECT fails FROM reset_failures WHERE email=?",
-                           (email,)).fetchone()
-        return row[0] if row else 0
     finally:
         conn.close()
 
@@ -2861,6 +2839,21 @@ def reset_password():
 
 # ---------------------------------------------------------------- dashboard
 
+def _pickup_line_entries(conn):
+    """Built-in pickup lines plus owner-added custom lines, in the same
+    order the Pickup Lines page and /api/reference show them."""
+    lines = [{"categories": list(tags), "category": tags[0], "line": t}
+             for tags, t in PICKUP_LINES]
+    for row in conn.execute(
+            "SELECT * FROM custom_pickup_lines ORDER BY id").fetchall():
+        tags = [c.strip() for c in (row["categories"] or "").split(",")
+                if c.strip()]
+        lines.append({"categories": tags,
+                      "category": tags[0] if tags else "",
+                      "line": row["line"]})
+    return lines
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard():
@@ -2874,8 +2867,18 @@ def dashboard():
         scan = conn.execute(
             "SELECT * FROM scans WHERE user_id=? ORDER BY id DESC LIMIT 1",
             (user["id"],)).fetchone()
+        # Entity shows the carrier's legal name when one was recorded
+        # for that MC (carriers table), falling back to the raw
+        # entity type ("CARRIER") stored in scan_log.
         log = conn.execute(
-            "SELECT * FROM scan_log WHERE user_id=? ORDER BY id DESC LIMIT 25",
+            "SELECT mc_number, status,"
+            " COALESCE((SELECT legal_name FROM carriers"
+            " WHERE carriers.user_id=scan_log.user_id"
+            " AND carriers.mc_number=scan_log.mc_number"
+            " AND legal_name IS NOT NULL AND legal_name<>''"
+            " ORDER BY id DESC LIMIT 1), entity) AS entity,"
+            " power_units, cargo, checked_at, note"
+            " FROM scan_log WHERE user_id=? ORDER BY id DESC LIMIT 25",
             (user["id"],)).fetchall()
         totals = conn.execute(
             "SELECT COUNT(*) c, SUM(qualified) q FROM scans WHERE user_id=?",
@@ -2887,6 +2890,15 @@ def dashboard():
             "SELECT COUNT(*) FROM carriers WHERE user_id=? AND source='scan'",
             (user["id"],)).fetchone()[0]
         demo_expired, demo_days_left = _demo_status(user)
+        # Smart Pickup Line card: one line from the real pickup-lines
+        # list (built-ins + owner-added customs). Deterministic by day
+        # so the card changes daily; ?pickup=N steps to another line.
+        entries = _pickup_line_entries(conn)
+        pickup_idx = request.args.get("pickup", type=int)
+        if pickup_idx is None:
+            pickup_idx = datetime.now().toordinal() % len(entries)
+        pickup_idx %= len(entries)
+        entry = entries[pickup_idx]
         return render_template(
             "dashboard.html", user=user, settings=settings,
             scan=dict(scan) if scan else None,
@@ -2897,6 +2909,10 @@ def dashboard():
             running=user["id"] in RUNNING_SCANS,
             demo_expired=demo_expired,
             demo_days_left=demo_days_left,
+            pickup_line=entry["line"],
+            pickup_category=entry["category"],
+            pickup_next=(pickup_idx + 1) % len(entries),
+            pickup_idx=pickup_idx + 1, pickup_total=len(entries),
             access_end_date=_format_access_end(_access_expiry(user)))
     finally:
         conn.close()
@@ -2921,7 +2937,14 @@ def api_status():
                             "can_resume": False})
         scan = dict(scan)
         log = conn.execute(
-            "SELECT * FROM scan_log WHERE user_id=? AND scan_id=? "
+            "SELECT mc_number, status,"
+            " COALESCE((SELECT legal_name FROM carriers"
+            " WHERE carriers.user_id=scan_log.user_id"
+            " AND carriers.mc_number=scan_log.mc_number"
+            " AND legal_name IS NOT NULL AND legal_name<>''"
+            " ORDER BY id DESC LIMIT 1), entity) AS entity,"
+            " power_units, cargo, checked_at, note"
+            " FROM scan_log WHERE user_id=? AND scan_id=? "
             "ORDER BY id DESC LIMIT 25",
             (user["id"], scan["scan_id"])).fetchall()
         elapsed = scan["duration_seconds"] or 0
@@ -3888,6 +3911,82 @@ def retry_error(eid):
     return redirect(url_for("errors_page"))
 
 
+def _daily_chart_svg(daily):
+    """Server-side SVG chart: scans per day + qualification rate.
+
+    `daily` is chronological [{d, checked, qualified}, ...]. Bars show
+    MCs scanned (blue) and qualified (green) per day; the red line is
+    the qualification rate (right axis, 0-100%). Pure SVG, no JS and
+    no new dependency, so it renders under any CSP. Returns "" when
+    there is nothing to chart.
+    """
+    rows = [{"d": r["d"], "checked": int(r["checked"] or 0),
+             "qualified": int(r["qualified"] or 0)} for r in daily]
+    if not rows:
+        return ""
+    for r in rows:
+        r["rate"] = (r["qualified"] / r["checked"] * 100
+                     if r["checked"] else 0)
+    w, h = 680, 260
+    left, right, top, bottom = 38, 34, 16, 28
+    pw, ph = w - left - right, h - top - bottom
+    n = len(rows)
+    max_v = max(r["checked"] for r in rows) or 1
+    slot = pw / n
+    bar_w = min(22, slot * 0.32)
+
+    def y_count(v):
+        return top + ph - v / max_v * ph
+
+    def y_rate(pct):
+        return top + ph - pct / 100 * ph
+
+    parts = ['<svg viewBox="0 0 %d %d" width="100%%" role="img" '
+             'aria-label="Scans per day chart" '
+             'style="max-width:680px;display:block">'
+             % (w, h)]
+    # Gridlines + left (count) axis labels.
+    for frac, lab in ((0, "0"), (0.5, str(max_v // 2)),
+                      (1, str(max_v))):
+        y = top + ph - frac * ph
+        parts.append('<line x1="%d" y1="%.1f" x2="%d" y2="%.1f" '
+                     'stroke="#e5e7eb" stroke-width="1"/>' % (left, y, w - right, y))
+        parts.append('<text x="%d" y="%.1f" font-size="10" fill="#6b7280" '
+                     'text-anchor="end">%s</text>' % (left - 5, y + 3, lab))
+    # Right (rate %) axis labels.
+    for pct in (0, 50, 100):
+        y = y_rate(pct)
+        parts.append('<text x="%d" y="%.1f" font-size="10" fill="#d21f2b" '
+                     'text-anchor="start">%d%%</text>' % (w - right + 5, y + 3, pct))
+    for i, r in enumerate(rows):
+        cx = left + slot * i + slot / 2
+        x1 = cx - bar_w - 1
+        x2 = cx + 1
+        yc, yq = y_count(r["checked"]), y_count(r["qualified"])
+        parts.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" '
+                     'fill="#2563eb"><title>%s: %d scanned</title></rect>'
+                     % (x1, yc, bar_w, top + ph - yc,
+                        html.escape(r["d"]), r["checked"]))
+        parts.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" '
+                     'fill="#16a34a"><title>%s: %d qualified</title></rect>'
+                     % (x2, yq, bar_w, top + ph - yq,
+                        html.escape(r["d"]), r["qualified"]))
+        parts.append('<text x="%.1f" y="%d" font-size="10" fill="#6b7280" '
+                     'text-anchor="middle">%s</text>'
+                     % (cx, h - 8, html.escape(r["d"][5:])))
+    pts = " ".join("%.1f,%.1f" % (left + slot * i + slot / 2, y_rate(r["rate"]))
+                   for i, r in enumerate(rows))
+    parts.append('<polyline points="%s" fill="none" stroke="#d21f2b" '
+                 'stroke-width="2"/>' % pts)
+    for i, r in enumerate(rows):
+        cx = left + slot * i + slot / 2
+        parts.append('<circle cx="%.1f" cy="%.1f" r="3" fill="#d21f2b">'
+                     '<title>%s: %.0f%% qualified</title></circle>'
+                     % (cx, y_rate(r["rate"]), html.escape(r["d"]), r["rate"]))
+    parts.append('</svg>')
+    return "".join(parts)
+
+
 @app.route("/reports")
 @login_required
 def reports():
@@ -3919,11 +4018,13 @@ def reports():
         checked = totals["checked"] or 0
         qualified = totals["qualified"] or 0
         rate = round(qualified / checked * 100, 1) if checked else 0
+        daily_rows = [dict(r) for r in daily]
+        chart_svg = _daily_chart_svg(list(reversed(daily_rows)))
         return render_template(
             "reports.html", user=user, checked=checked, qualified=qualified,
             errors=totals["errors"] or 0, rate=rate, cargo_tally=cargo_tally,
             top_states=sorted(state_tally.items(), key=lambda kv: -kv[1])[:10],
-            daily=[dict(r) for r in daily], saved=saved)
+            daily=daily_rows, saved=saved, chart_svg=chart_svg)
     finally:
         conn.close()
 
