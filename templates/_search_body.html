@@ -18,7 +18,7 @@
     <input type="hidden" name="mode" value="bulk">
     <label>Paste MC or DOT numbers — one per line (up to 50 per search)</label>
     <textarea name="bulk" rows="8" placeholder="000000&#10;000000&#10;MC-000000" required>{{ bulk }}</textarea>
-    <div style="margin-top:12px"><button class="btn" type="submit">Check all</button></div>
+    <div class="mt-12"><button class="btn" type="submit">Check all</button></div>
   </form>
   <p class="muted">Each line is checked live against FMCSA SAFER — MC and DOT numbers both work, and a number that is both shows both records.</p>
 </div>
@@ -59,7 +59,7 @@
       <h2>Bulk results — {{ result.total }} checked</h2>
       <p><b>{{ result.qualified }} qualified</b> · {{ result.not_found }} not found{% if result.errors %} · <b>{{ result.errors }} errors</b>{% endif %}</p>
       {% if result.capped %}<p class="muted">Only the first {{ result.cap }} lines were checked — paste the rest in a second bulk search.</p>{% endif %}
-      <p><button class="btn secondary" type="button" onclick="downloadBulkCsv()">Download CSV</button> <button class="btn secondary" type="button" onclick="downloadBulkJson()">Download JSON</button></p>
+      <p><button class="btn secondary download-bulk-csv" type="button">Download CSV</button> <button class="btn secondary download-bulk-json" type="button">Download JSON</button></p>
       <div class="table-wrap"><table id="bulk-table">
         <thead><tr><th>Input</th><th>Carrier</th><th>MC / USDOT</th><th>Status</th><th>Authority</th><th>Phone</th><th>Location</th><th>Cargo</th></tr></thead>
         <tbody>
@@ -68,11 +68,11 @@
           {% set bulk_bad = r.status in ('Not Found', 'Error') or 'inactive' in (r.status or '').lower() or 'not authorized' in (r.status or '').lower() %}
           <tr>
             <td>{{ r.input }}</td>
-            <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.legal_name or '—' }}</button></b>{% if r.note and not r.legal_name %}<br><span class="muted">{{ r.note }}</span>{% endif %}</td>
-            <td>{% if r.mc_number %}<button class="phone-copy {% if bulk_ok %}ok-green{% elif bulk_bad %}bad-red{% endif %}" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button><br>{% endif %}{% if r.usdot_number %}<button class="phone-copy {% if bulk_ok %}ok-green{% elif bulk_bad %}bad-red{% endif %}" data-copy="{{ r.usdot_number }}" onclick="copyText(this)" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}{% if not r.mc_number and not r.usdot_number %}—{% endif %}</td>
+            <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" title="Tap to copy">{{ r.legal_name or '—' }}</button></b>{% if r.note and not r.legal_name %}<br><span class="muted">{{ r.note }}</span>{% endif %}</td>
+            <td>{% if r.mc_number %}<button class="phone-copy {% if bulk_ok %}ok-green{% elif bulk_bad %}bad-red{% endif %}" data-copy="{{ r.mc_number }}" title="Tap to copy">MC-{{ r.mc_number }}</button><br>{% endif %}{% if r.usdot_number %}<button class="phone-copy {% if bulk_ok %}ok-green{% elif bulk_bad %}bad-red{% endif %}" data-copy="{{ r.usdot_number }}" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}{% if not r.mc_number and not r.usdot_number %}—{% endif %}</td>
             <td>{% if r.status == 'Qualified' %}<span class="pill green">Qualified</span>{% elif r.status == 'Not Found' or r.status == 'Error' %}<span class="pill red">{{ r.status }}</span>{% else %}<span class="pill yellow">{{ r.status }}</span>{% endif %}</td>
             <td>{{ r.authority_status or '—' }}</td>
-            <td>{% if r.phone %}<button class="phone-copy" data-phone="{{ r.phone }}" onclick="copyPhone(this)"" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td>
+            <td>{% if r.phone %}<button class="phone-copy" data-phone="{{ r.phone }}" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td>
             <td>{% if r.city %}{{ r.city }}, {{ r.state }}{% else %}—{% endif %}</td>
             <td>{{ r.cargo or '—' }}</td>
           </tr>
@@ -103,10 +103,10 @@
           {% else %}
             <div class="expected-trucks muted">Not enough info</div>
           {% endif %}
-          <div class="muted" style="font-size:12px">Cargo se andaza — confirm nahi.</div>
+          <div class="muted text-xs">Cargo se andaza — confirm nahi.</div>
         </div>
       </div>
-      <p><button class="btn" type="button" onclick="copyAllDetails(this)"
+      <p><button class="btn copy-all-btn" type="button"
         data-name="{{ rec.legal_name }}" data-dba="{{ rec.dba_name or '' }}"
         data-owner="{{ rec.owner_officer or '' }}"
         data-mc="{{ rec.mc_number }}" data-dot="{{ rec.usdot_number }}"
@@ -116,16 +116,16 @@
       {% if result.matched %}<p class="muted">Matched name search: <b>{{ result.matched.name }}</b> — {{ result.matched.location }}</p>{% endif %}
       <div class="detail-section">
         <h3>Carrier</h3>
-        <div class="detail-row"><span class="detail-label">Legal name</span><span class="detail-value big"><button class="phone-copy" data-copy="{{ rec.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ rec.legal_name or '—' }}</button></span></div>
-        {% if rec.owner_officer %}<div class="detail-row"><span class="detail-label">Owner / Officer</span><span class="detail-value big"><button class="phone-copy" data-copy="{{ rec.owner_officer }}" onclick="copyText(this)" title="Tap to copy">{{ rec.owner_officer }}</button></span></div>{% endif %}
+        <div class="detail-row"><span class="detail-label">Legal name</span><span class="detail-value big"><button class="phone-copy" data-copy="{{ rec.legal_name }}" title="Tap to copy">{{ rec.legal_name or '—' }}</button></span></div>
+        {% if rec.owner_officer %}<div class="detail-row"><span class="detail-label">Owner / Officer</span><span class="detail-value big"><button class="phone-copy" data-copy="{{ rec.owner_officer }}" title="Tap to copy">{{ rec.owner_officer }}</button></span></div>{% endif %}
         <div class="detail-row"><span class="detail-label">DBA name</span><span class="detail-value muted">{{ rec.dba_name or '—' }}</span></div>
         <div class="detail-row"><span class="detail-label">Entity type</span><span class="detail-value muted">{{ rec.entity_type or '—' }}</span></div>
       </div>
       <div class="detail-section">
         <h3>Numbers</h3>
-        <div class="detail-row"><span class="detail-label">MC number</span><span class="detail-value big">{% if rec.mc_number %}<button class="phone-copy {% if is_active %}ok-green{% else %}bad-red{% endif %}" data-copy="{{ rec.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ rec.mc_number }}</button>{% else %}—{% endif %}</span></div>
-        <div class="detail-row"><span class="detail-label">USDOT number</span><span class="detail-value big">{% if rec.usdot_number %}<button class="phone-copy {% if is_active %}ok-green{% else %}bad-red{% endif %}" data-copy="{{ rec.usdot_number }}" onclick="copyText(this)" title="Tap to copy">{{ rec.usdot_number }}</button>{% else %}—{% endif %}</span></div>
-        <div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value big">{% if rec.phone %}<button class="phone-copy" data-phone="{{ rec.phone }}" onclick="copyPhone(this)"" title="Tap to copy">{{ rec.phone }}</button>{% else %}—{% endif %}</span></div>
+        <div class="detail-row"><span class="detail-label">MC number</span><span class="detail-value big">{% if rec.mc_number %}<button class="phone-copy {% if is_active %}ok-green{% else %}bad-red{% endif %}" data-copy="{{ rec.mc_number }}" title="Tap to copy">MC-{{ rec.mc_number }}</button>{% else %}—{% endif %}</span></div>
+        <div class="detail-row"><span class="detail-label">USDOT number</span><span class="detail-value big">{% if rec.usdot_number %}<button class="phone-copy {% if is_active %}ok-green{% else %}bad-red{% endif %}" data-copy="{{ rec.usdot_number }}" title="Tap to copy">{{ rec.usdot_number }}</button>{% else %}—{% endif %}</span></div>
+        <div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value big">{% if rec.phone %}<button class="phone-copy" data-phone="{{ rec.phone }}" title="Tap to copy">{{ rec.phone }}</button>{% else %}—{% endif %}</span></div>
       </div>
       <div class="detail-section">
         <h3>Address</h3>
@@ -141,7 +141,7 @@
         <div class="detail-row"><span class="detail-label">Authority</span><span class="detail-value {% if is_active %}ok-green{% else %}bad-red{% endif %}"><b>{{ rec.authority_status or '—' }}</b></span></div>
         <div class="detail-row"><span class="detail-label">Result</span><span class="detail-value"><b>{{ rec.status }}</b>{% if rec.note %}<br><span class="muted">{{ rec.note }}</span>{% endif %}</span></div>
       </div>
-      <p style="margin-top:12px"><a href="{{ result.safer_url }}" target="_blank" rel="noopener">Verify directly on FMCSA SAFER Web ↗</a></p>
+      <p class="mt-12"><a href="{{ result.safer_url }}" target="_blank" rel="noopener">Verify directly on FMCSA SAFER Web ↗</a></p>
     </div>
   {% elif result.kind == 'ambiguous' %}
     <div class="card">
@@ -186,10 +186,10 @@
         <tbody>
         {% for r in result.rows %}
           <tr>
-            <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b><br><span class="muted">{% if r.usdot_number %}<button class="phone-copy" data-copy="{{ r.usdot_number }}" onclick="copyText(this)" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}</span></td>
-            <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.legal_name }}</button></b>{% if r.dba_name %}<br><span class="muted">DBA: {{ r.dba_name }}</span>{% endif %}</td>
+            <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" title="Tap to copy">MC-{{ r.mc_number }}</button></b><br><span class="muted">{% if r.usdot_number %}<button class="phone-copy" data-copy="{{ r.usdot_number }}" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}</span></td>
+            <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" title="Tap to copy">{{ r.legal_name }}</button></b>{% if r.dba_name %}<br><span class="muted">DBA: {{ r.dba_name }}</span>{% endif %}</td>
             <td>{{ r.city }}, {{ r.state }}</td>
-            <td>{% if r.phone %}<button class="phone-copy" data-phone="{{ r.phone }}" onclick="copyPhone(this)"" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td>
+            <td>{% if r.phone %}<button class="phone-copy" data-phone="{{ r.phone }}" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td>
             <td>{% for c in r.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}</td>
             <td><a class="btn secondary" href="{{ url_for('carrier_search', q=r.mc_number, type='mc') }}">Live check</a></td>
           </tr>
@@ -202,92 +202,4 @@
   {% endif %}
 {% endif %}
 
-<script>
-/* Search placeholder follows the selected search type — every sample is zeros. */
-var SEARCH_PH = {auto: '000000, (000) 000-0000', mc: '000000', usdot: '000000', phone: '(000) 000-0000', email: '000000@000000.com', name: '000000'};
-(function(){
-  var sel = document.getElementById('stype');
-  var inp = document.getElementById('q');
-  if (sel && inp) {
-    sel.addEventListener('change', function(){ inp.placeholder = SEARCH_PH[sel.value] || SEARCH_PH.auto; });
-  }
-})();
-async function copyPhone(btn){
-  const phone = btn.getAttribute('data-phone');
-  if(!phone) return;
-  try { await navigator.clipboard.writeText(phone); }
-  catch(e){
-    const t = document.createElement('textarea');
-    t.value = phone; document.body.appendChild(t); t.select();
-    try { document.execCommand('copy'); } catch(_){}
-    t.remove();
-  }
-  btn.classList.add('copied');
-  const old = btn.textContent;
-  btn.textContent = 'Copied ✓';
-  setTimeout(function(){ btn.textContent = old; btn.classList.remove('copied'); }, 1200);
-}
-function copyAllDetails(btn){
-  const g = function(k){ return (btn.getAttribute('data-' + k) || '').trim(); };
-  const lines = [];
-  const name = g('name'); if (name) lines.push(name);
-  const dba = g('dba'); if (dba) lines.push('DBA: ' + dba);
-  const owner = g('owner'); if (owner) lines.push('Owner: ' + owner);
-  const mc = g('mc'); if (mc) lines.push('MC: ' + mc);
-  const dot = g('dot'); if (dot) lines.push('USDOT: ' + dot);
-  const phone = g('phone'); if (phone) lines.push('Phone: ' + phone);
-  const addr = g('address').replace(/^,\s*/, ''); if (addr) lines.push('Address: ' + addr);
-  const expected = g('expected'); if (expected) lines.push('Expected Truck: ' + expected);
-  const text = lines.join('\n');
-  if (!text) return;
-  const done = function(){
-    const old = btn.textContent;
-    btn.textContent = 'Copied ✓';
-    setTimeout(function(){ btn.textContent = old; }, 1200);
-  };
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(done).catch(function(){ fallbackCopy(text); done(); });
-  } else { fallbackCopy(text); done(); }
-}
-function fallbackCopy(text){
-  const t = document.createElement('textarea');
-  t.value = text; document.body.appendChild(t); t.select();
-  try { document.execCommand('copy'); } catch(_){}
-  t.remove();
-}
-function bulkRows(){
-  /* Same table data as downloadBulkCsv, as objects — shared by CSV + JSON. */
-  const rows = [];
-  document.querySelectorAll('#bulk-table tbody tr').forEach(function(tr){
-    const cells = [];
-    tr.querySelectorAll('td').forEach(function(td){ cells.push(td.innerText.replace(/\n/g,' ').trim()); });
-    const mc = (cells[2].match(/MC-(\d+)/)||[])[1] || '';
-    const dot = (cells[2].match(/USDOT (\d+)/)||[])[1] || '';
-    const loc = cells[6].split(',');
-    rows.push({input: cells[0], carrier: cells[1], mc: mc, usdot: dot,
-               status: cells[3], authority: cells[4], phone: cells[5],
-               city: (loc[0]||'').trim(), state: (loc[1]||'').trim(),
-               cargo: cells[7]});
-  });
-  return rows;
-}
-function downloadBulkCsv(){
-  const rows = [['Input','Carrier','MC','USDOT','Status','Authority','Phone','City','State','Cargo']];
-  bulkRows().forEach(function(o){
-    rows.push([o.input, o.carrier, o.mc, o.usdot, o.status, o.authority,
-               o.phone, o.city, o.state, o.cargo]);
-  });
-  const csv = rows.map(function(r){ return r.map(function(v){ return '"' + String(v).replace(/"/g,'""') + '"'; }).join(','); }).join('\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
-  a.download = 'bulk-carrier-search.csv';
-  a.click();
-}
-function downloadBulkJson(){
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob(
-    [JSON.stringify(bulkRows(), null, 2)], {type:'application/json'}));
-  a.download = 'bulk-carrier-search.json';
-  a.click();
-}
-</script>
+<script src="{{ url_for('static', filename='search.js') }}"></script>

@@ -395,3 +395,53 @@ input[type=date], select, textarea { padding: 12px 14px; font-size: 15px; }
 
 /* WhatsApp icon next to the owner phone number */
 .wa-icon { width: 1em; height: 1em; vertical-align: -0.15em; margin-right: 0.2em; flex: none; }
+
+/* ---- CSP cleanup 2026-11-22: no 'unsafe-inline' ----
+   Utility + page classes replacing every inline style="..." attribute
+   (79 of them) and the display:none states JS toggles. JS toggles
+   visibility with classList ('hidden'), never with el.style.display,
+   so these classes stay in charge. */
+.hidden { display: none; }
+.inline { display: inline; }
+.mb-0 { margin-bottom: 0; }
+.mb-12 { margin-bottom: 12px; }
+.mb-18 { margin-bottom: 18px; }
+.mt-6 { margin-top: 6px; }
+.mt-8 { margin-top: 8px; }
+.mt-10 { margin-top: 10px; }
+.mt-12 { margin-top: 12px; }
+.mt-14 { margin-top: 14px; }
+.mt-16 { margin-top: 16px; }
+.text-center { text-align: center; }
+.text-xs { font-size: 12px; }
+.text-14 { font-size: 14px; }
+.w-full { width: 100%; }
+.break-all { word-break: break-all; }
+.flex-gap-6 { display: flex; gap: 6px; }
+.flex-gap-6-center { display: flex; gap: 6px; align-items: center; }
+.flex-gap-8 { display: flex; gap: 8px; }
+/* Narrow inputs (admin set-password, custom-months): element-qualified so
+   this beats the global input width:100% rule. */
+input.input-narrow { width: 130px; padding: 6px; }
+/* Call-status select on Qualified Carriers */
+.call-select { width: 110px; padding: 4px; margin-top: 4px; }
+/* Pickup Lines rows */
+.line-row { display: flex; justify-content: space-between; gap: 12px;
+  border-bottom: 1px solid var(--row-border); padding: 10px 0; }
+.line-actions { display: flex; gap: 6px; align-items: flex-start; flex-shrink: 0; }
+/* Notes list rows */
+.row-divider { border-bottom: 1px solid var(--row-border); padding: 10px 0; }
+/* Owner-only note under "Add a Pickup Line" (kept #666 as before) */
+.owner-note { color: #666; font-size: 14px; }
+/* Category checkboxes on the Add Pickup Line form */
+.cat-check-label { display: inline-block; margin: 4px 12px 4px 0; font-weight: normal; }
+/* Cargo Guide truck-type field: wider than the other form-row children */
+.form-row > div.flex-grow-min220 { flex: 1; min-width: 220px; }
+/* Commodity chips on the Cargo Guide */
+.commodity-link { margin: 2px; }
+/* Legend under the dashboard stat grid */
+.legend-note { margin: -6px 0 18px; }
+/* Wide auth wrap (logged-out Carrier Search) */
+.auth-wrap.wide { max-width: 780px; }
+/* Scan progress bar starts empty; dashboard.js sets its width live */
+#bar { width: 0; }

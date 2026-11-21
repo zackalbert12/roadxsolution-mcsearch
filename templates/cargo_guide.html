@@ -6,7 +6,7 @@
 <p class="next">What to do: choose a truck below, then tap any commodity to open those carriers.</p></div>
 <div class="card">
   <form method="get" class="form-row">
-    <div style="flex:1;min-width:220px"><label>Truck type</label>
+    <div class="flex-grow-min220"><label>Truck type</label>
       <select name="equipment">
         <option value="" {% if not equipment %}selected{% endif %}>All trucks</option>
         {% for eq in equipment_list %}
@@ -21,7 +21,7 @@
   <h2>{{ equipment }} — {{ guide[equipment]|length }} commodities</h2>
   <p>
     {% for c in guide[equipment] %}
-    <a class="btn secondary small" href="{{ url_for('qualified', commodity=c) }}" style="margin:2px">{{ c }}</a>
+    <a class="btn secondary small commodity-link" href="{{ url_for('qualified', commodity=c) }}">{{ c }}</a>
     {% endfor %}
   </p>
 </div>
@@ -31,7 +31,7 @@
   <h2>{{ eq }} — {{ guide[eq]|length }} commodities</h2>
   <p>
     {% for c in guide[eq] %}
-    <a class="btn secondary small" href="{{ url_for('qualified', commodity=c) }}" style="margin:2px">{{ c }}</a>
+    <a class="btn secondary small commodity-link" href="{{ url_for('qualified', commodity=c) }}">{{ c }}</a>
     {% endfor %}
   </p>
 </div>

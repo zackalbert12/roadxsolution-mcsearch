@@ -3,7 +3,7 @@
 {% block content %}
 <div class="hero"><h1>Reports</h1>
 <p>Your totals — how many carriers you checked, how many were good, and where they are.</p></div>
-<div class="grid cols-4" style="margin-bottom:18px">
+<div class="grid cols-4 mb-18">
   <div class="stat"><div class="label">Total Scanned</div><div class="value">{{ checked }}</div><div class="hint">MCs checked in total</div></div>
   <div class="stat"><div class="label">Qualified</div><div class="value green">{{ qualified }}</div><div class="hint">good ones, ready to call</div></div>
   <div class="stat"><div class="label">Qualification Rate</div><div class="value orange">{{ rate }}%</div><div class="hint">out of every 100 checked</div></div>

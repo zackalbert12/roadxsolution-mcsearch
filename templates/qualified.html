@@ -48,10 +48,10 @@
       {% endfor %}
     </div>
     <p class="selected-line">
-      <button type="button" class="btn small secondary" onclick="selectAllCommodities()">Select All</button>
+      <button type="button" class="btn small secondary" id="btn-select-all-commodities">Select All</button>
       {% if f.commodities %}Selected:
       {% for c in f.commodities %}<span class="chip">{{ c }}</span>{% endfor %}
-      <button type="button" class="btn small secondary" onclick="clearCommodities()">Clear all</button>
+      <button type="button" class="btn small secondary" id="btn-clear-commodities">Clear all</button>
       {% endif %}
     </p>
   </div>
@@ -63,16 +63,16 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b><br><span class="muted">{% if r.usdot_number %}<button class="phone-copy" data-copy="{{ r.usdot_number }}" onclick="copyText(this)" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}</span></td>
-      <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.legal_name }}</button></b>{% if r.dba_name %}<br><span class="muted">DBA: {{ r.dba_name }}</span>{% endif %}<br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
+      <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" title="Tap to copy">MC-{{ r.mc_number }}</button></b><br><span class="muted">{% if r.usdot_number %}<button class="phone-copy" data-copy="{{ r.usdot_number }}" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}</span></td>
+      <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" title="Tap to copy">{{ r.legal_name }}</button></b>{% if r.dba_name %}<br><span class="muted">DBA: {{ r.dba_name }}</span>{% endif %}<br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
       <td>{{ r.state }}</td>
-      <td><button class="phone-copy" data-phone="{{ r.phone }}" onclick="copyPhone(this)"" title="Tap to copy">{{ r.phone }}</button></td>
+      <td><button class="phone-copy" data-phone="{{ r.phone }}" title="Tap to copy">{{ r.phone }}</button></td>
       <td>{{ r.power_units }}</td>
       <td>{% for c in r.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}</td>
       <td>
         <span class="calldot {{ r.call_status }}"></span>
         <span id="calls-{{ r.id }}">Calls: {{ r.calls }}</span><br>
-        <select onchange="setCall({{ r.id }}, this.value)" style="width:110px;padding:4px;margin-top:4px">
+        <select class="call-select" data-carrier-id="{{ r.id }}">
           <option value="none" {% if r.call_status=='none' %}selected{% endif %}>No status</option>
           <option value="call" {% if r.call_status=='call' %}selected{% endif %}>Call</option>
           <option value="callback" {% if r.call_status=='callback' %}selected{% endif %}>Call Back</option>
@@ -81,7 +81,7 @@
       </td>
       <td>
         <a class="btn secondary" href="{{ url_for('carrier_search', q=r.mc_number, type='mc') }}">View</a>
-        <button class="star {% if r.starred %}on{% endif %}" onclick="toggleStar({{ r.id }}, this)" title="Star / save">★</button>
+        <button class="star star-toggle {% if r.starred %}on{% endif %}" data-carrier-id="{{ r.id }}" title="Star / save">★</button>
       </td>
     </tr>
   {% else %}
@@ -99,41 +99,5 @@
 {% endif %}
 </div>
 
-<script>
-function selectAllCommodities(){
-  document.querySelectorAll('#qualified-filter input[name="commodity"]').forEach(function(cb){ cb.checked = true; });
-  document.getElementById('qualified-filter').submit();
-}
-function clearCommodities(){
-  document.querySelectorAll('#qualified-filter input[name="commodity"]').forEach(function(cb){ cb.checked = false; });
-  document.getElementById('qualified-filter').submit();
-}
-async function copyPhone(btn){
-  const phone = btn.getAttribute('data-phone');
-  if(!phone) return;
-  try { await navigator.clipboard.writeText(phone); }
-  catch(e){
-    const t = document.createElement('textarea');
-    t.value = phone; document.body.appendChild(t); t.select();
-    try { document.execCommand('copy'); } catch(_){}
-    t.remove();
-  }
-  btn.classList.add('copied');
-  const old = btn.textContent;
-  btn.textContent = 'Copied ✓';
-  setTimeout(function(){ btn.textContent = old; btn.classList.remove('copied'); }, 1200);
-}
-async function toggleStar(id, btn){
-  const r = await fetch('/api/carrier/' + id + '/star', {method:'POST', headers:{'X-CSRF-Token': csrfToken()}});
-  const d = await r.json();
-  if (d.ok) btn.classList.toggle('on', !!d.starred);
-}
-async function setCall(id, status){
-  const r = await fetch('/api/carrier/' + id + '/call-status', {
-    method:'POST', headers:{'Content-Type':'application/json', 'X-CSRF-Token': csrfToken()},
-    body: JSON.stringify({status: status})});
-  const d = await r.json();
-  if (d.ok) document.getElementById('calls-' + id).textContent = 'Calls: ' + d.calls;
-}
-</script>
+<script src="{{ url_for('static', filename='qualified.js') }}"></script>
 {% endblock %}
