@@ -85,6 +85,15 @@
     {% set rec = result.rec %}
     {% set is_active = rec.found and not rec.inactive and not rec.fetch_error and (rec.authority_status or '').upper().startswith('AUTHORIZED FOR') %}
     <div class="card">
+      {% if rec.status == 'Qualified' %}
+      <div class="detail-verdict good">Good to call — this carrier is authorised and hauls cargo that matches.</div>
+      {% elif rec.status == 'Not Found' %}
+      <div class="detail-verdict bad">No SAFER record for this number — check the number and try again.</div>
+      {% elif rec.status == 'Error' %}
+      <div class="detail-verdict bad">The check failed — try again in a moment.</div>
+      {% else %}
+      <div class="detail-verdict warn">Skipped — see the reason in the Status section below.</div>
+      {% endif %}
       <div class="detail-head">
         <div class="detail-head-main">
           <h2>{{ rec.legal_name or 'Carrier' }}
@@ -92,26 +101,26 @@
             {% elif rec.status == 'Not Found' or rec.status == 'Error' %}<span class="pill red">{{ rec.status }}</span>
             {% else %}<span class="pill yellow">{{ rec.status }}</span>{% endif %}
           </h2>
-          {% if rec.status == 'Qualified' %}<p class="next">Good to call — this carrier is authorised and hauls cargo that matches.</p>
-          {% elif rec.status == 'Not Found' %}<p class="next">No SAFER record for this number — check the number and try again.</p>
-          {% elif rec.status == 'Error' %}<p class="next">The check failed — try again in a moment.</p>
-          {% else %}<p class="next">Skipped — see the reason in the Status section below.</p>{% endif %}
         </div>
         <div class="expected-box">
-          <div class="expected-title">Expected Truck</div>
+          <div class="expected-head">
+            <span class="expected-title">Expected Truck</span>
+            <span class="estimate-pill">Estimate</span>
+          </div>
           {% if rec.expected_trucks %}
-            <div class="expected-trucks">{% for t in rec.expected_trucks %}<span class="pill blue">{{ t }}</span> {% endfor %}</div>
+            <div class="expected-trucks">{% for t in rec.expected_trucks %}<span class="pill solid-red">{{ t }}</span> {% endfor %}</div>
+            {% if rec.cargo_carried %}<div class="expected-evidence"><b>From cargo:</b> {{ rec.cargo_carried | join(', ') }}</div>{% endif %}
           {% else %}
             <div class="expected-trucks muted">Not enough info</div>
           {% endif %}
-          <div class="muted text-xs">Cargo se andaza — confirm nahi.</div>
+          <div class="expected-note">Estimate only — FMCSA does not record truck type, so this is not confirmed. Ask the carrier before you book.</div>
         </div>
       </div>
       {% if rec.inspections is not none %}
       <div class="insp-box">
         <div class="insp-head">
           <span class="insp-title">Vehicles in Inspections</span>
-          <span class="pill">{{ rec.inspections.total }} INSP.</span>
+          <span class="pill grey">{{ rec.inspections.total }} INSP.</span>
         </div>
         {% if rec.inspections.total == 0 %}
           <div class="muted">No roadside inspections recorded in the last 24 months.</div>
