@@ -3029,6 +3029,46 @@ def notes():
         conn.close()
 
 
+@app.route("/notes/<int:nid>/edit", methods=["GET", "POST"])
+@login_required
+def edit_note(nid):
+    """Edit a note — same ownership scoping and field caps as create."""
+    user = current_user()
+    conn = store.connect()
+    try:
+        row = conn.execute("SELECT * FROM notes WHERE id=? AND user_id=?",
+                           (nid, user["id"])).fetchone()
+        if not row:
+            abort(404)
+        if request.method == "POST":
+            mc_number = (request.form.get("mc_number") or "").strip()[:20]
+            title = (request.form.get("title") or "").strip()[:200]
+            text = (request.form.get("text") or "").strip()
+            tags = (request.form.get("tags") or "").strip()[:200]
+            if len(text) > 5000:
+                flash("Note text is too long — at most 5,000 characters.")
+                return redirect(url_for("edit_note", nid=nid))
+            priority = request.form.get("priority") or "Normal"
+            if priority not in ("Low", "Normal", "High", "Urgent"):
+                priority = "Normal"
+            conn.execute(
+                "UPDATE notes SET mc_number=?, title=?, text=?, tags=?,"
+                " priority=?, reminder_date=? WHERE id=? AND user_id=?",
+                (mc_number, title, text, tags, priority,
+                 request.form.get("reminder_date") or "", nid, user["id"]))
+            conn.commit()
+            flash("Note saved.")
+            return redirect(url_for("notes"))
+        rows = conn.execute(
+            "SELECT * FROM notes WHERE user_id=? ORDER BY id DESC",
+            (user["id"],)).fetchall()
+        return render_template("notes.html", user=user,
+                               rows=[dict(r) for r in rows],
+                               edit_note=dict(row))
+    finally:
+        conn.close()
+
+
 @app.route("/notes/<int:nid>/delete", methods=["POST"])
 @login_required
 def delete_note(nid):

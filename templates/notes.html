@@ -6,19 +6,19 @@
 <p class="next">What to do: fill in the form on the left and press Save Note.</p></div>
 <div class="grid cols-2">
   <div class="card">
-    <h2>New note</h2>
-    <form method="post">
+    <h2>{% if edit_note %}Edit note{% else %}New note{% endif %}</h2>
+    <form method="post" {% if edit_note %}action="{{ url_for('edit_note', nid=edit_note.id) }}"{% endif %}>
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>MC Number — which carrier is this note about?</label><input type="text" name="mc_number" placeholder="e.g. 1788002">
-      <label>Note Title — a short name for this note</label><input type="text" name="title" placeholder="e.g. Called carrier — wants reefer loads">
-      <label>Note — what happened, what to do next</label><textarea name="text" rows="4" placeholder="e.g. Spoke to the owner, truck is empty in Dallas on Monday, call back Friday."></textarea>
-      <label>Tags — words to find this note later (comma-separated)</label><input type="text" name="tags" placeholder="reefer, follow-up">
+      <label>MC Number — which carrier is this note about?</label><input type="text" name="mc_number" placeholder="e.g. 1788002" value="{{ edit_note.mc_number or '' }}">
+      <label>Note Title — a short name for this note</label><input type="text" name="title" placeholder="e.g. Called carrier — wants reefer loads" value="{{ edit_note.title or '' }}">
+      <label>Note — what happened, what to do next</label><textarea name="text" rows="4" placeholder="e.g. Spoke to the owner, truck is empty in Dallas on Monday, call back Friday.">{{ edit_note.text or '' }}</textarea>
+      <label>Tags — words to find this note later (comma-separated)</label><input type="text" name="tags" placeholder="reefer, follow-up" value="{{ edit_note.tags or '' }}">
       <label>Priority — how urgent is this?</label>
       <select name="priority">
-        <option>Low</option><option selected>Normal</option><option>High</option><option>Urgent</option>
+        <option {% if edit_note and edit_note.priority=='Low' %}selected{% endif %}>Low</option><option {% if not edit_note or edit_note.priority=='Normal' %}selected{% endif %}>Normal</option><option {% if edit_note and edit_note.priority=='High' %}selected{% endif %}>High</option><option {% if edit_note and edit_note.priority=='Urgent' %}selected{% endif %}>Urgent</option>
       </select>
-      <label>Reminder Date — when should you look at this again?</label><input type="date" name="reminder_date">
-      <div style="margin-top:16px"><button class="btn" type="submit">Save Note</button></div>
+      <label>Reminder Date — when should you look at this again?</label><input type="date" name="reminder_date" value="{{ edit_note.reminder_date or '' }}">
+      <div style="margin-top:16px"><button class="btn" type="submit">{% if edit_note %}Save Changes{% else %}Save Note{% endif %}</button>{% if edit_note %} <a class="btn secondary" href="{{ url_for('notes') }}">Cancel</a>{% endif %}</div>
     </form>
   </div>
   <div class="card">
@@ -32,6 +32,7 @@
         <div class="muted">{{ n.tags }}{% if n.reminder_date %} · Reminder: {{ n.reminder_date }}{% endif %} · {{ n.created_at }}</div>
         <form method="post" action="{{ url_for('delete_note', nid=n.id) }}" style="margin-top:6px">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <a class="btn secondary small" href="{{ url_for('edit_note', nid=n.id) }}">Edit</a>
           <button class="btn secondary small" type="submit">Delete</button>
         </form>
       </div>
