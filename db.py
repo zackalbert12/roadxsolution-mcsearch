@@ -167,6 +167,14 @@ CREATE INDEX IF NOT EXISTS idx_carriers_user_source ON carriers(user_id, source)
 CREATE INDEX IF NOT EXISTS idx_scan_log_user_scan ON scan_log(user_id, scan_id);
 CREATE INDEX IF NOT EXISTS idx_check_hist_user_mc ON check_history(user_id, mc_number);
 CREATE INDEX IF NOT EXISTS idx_scans_user ON scans(user_id);
+-- Hot lookups filter by user and order by id (latest first): a
+-- (user_id, id) composite keeps them off full-table scans.
+CREATE INDEX IF NOT EXISTS idx_error_mcs_user_id ON error_mcs(user_id, id);
+CREATE INDEX IF NOT EXISTS idx_motus_runs_user_id ON motus_runs(user_id, id);
+CREATE INDEX IF NOT EXISTS idx_notes_user_id ON notes(user_id, id);
+CREATE INDEX IF NOT EXISTS idx_password_resets_user_id ON password_resets(user_id, id);
+CREATE INDEX IF NOT EXISTS idx_scan_log_user_id ON scan_log(user_id, id);
+CREATE INDEX IF NOT EXISTS idx_scans_user_id ON scans(user_id, id);
 -- Audit fix 9: rate-limit counters live in SQLite (not per-process
 -- memory) so the 2 gunicorn workers share one count. One row per
 -- attempt; old rows are pruned on every check.
