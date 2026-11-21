@@ -4,6 +4,13 @@
 <div class="hero">
   <h1>MC Scanner</h1>
   <p>Check a whole range of MC numbers at once — we look up each one live on FMCSA SAFER and keep only the good carriers.</p>
+  {% if user.plan == 'Demo' %}
+    {% if demo_expired %}
+      <p class="alert">Demo trial ended — ask the site admin for Lifetime access.</p>
+    {% else %}
+      <p class="notice">Demo trial: {{ demo_days_left }} day{{ 's' if demo_days_left != 1 else '' }} left — full access. Ask the site admin for Lifetime access before it ends.</p>
+    {% endif %}
+  {% endif %}
   <p class="next">What to do: type a Start MC and an End MC below, then press Start Scanning.</p>
   <div class="steps">
     <div class="step"><b class="num">1</b> Type the MC range</div>

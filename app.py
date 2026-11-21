@@ -66,6 +66,56 @@ def now_time():
     return datetime.now().strftime("%H:%M:%S")
 
 
+# ---------------------------------------------------------------- demo trials
+# A new signup gets a 7-day full trial (plan 'Demo'). Only the admin can
+# give Lifetime access. The trial is derived from plan + created_at — no
+# schema change. Timestamps are naive local time, same as now_str().
+DEMO_TRIAL_DAYS = 7
+DEMO_EXPIRED_MESSAGE = ("Your 7-day demo trial has ended. Ask the site "
+                        "admin for Lifetime access.")
+
+
+def _demo_status(user):
+    """(expired, days_left) for a Demo-plan account.
+
+    Lifetime users and the admin never expire: (False, None). days_left is
+    the whole days remaining in the trial, rounded up, so the last day
+    still reads as 1 day left."""
+    try:
+        plan = user["plan"]
+        is_admin = user["is_admin"]
+        created = user["created_at"]
+    except (KeyError, TypeError, IndexError):
+        return (False, None)
+    if is_admin or plan != "Demo":
+        return (False, None)
+    try:
+        created_dt = datetime.strptime(created, "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return (False, None)
+    remaining = created_dt + timedelta(days=DEMO_TRIAL_DAYS) - datetime.now()
+    if remaining.total_seconds() <= 0:
+        return (True, 0)
+    days_left = remaining.days + (1 if remaining.seconds else 0)
+    return (False, days_left)
+
+
+def _demo_expired_for(user_id):
+    """Re-read a user from the DB and say whether their demo has expired.
+    Used by background threads, which must stop mid-run when a trial ends."""
+    conn = store.connect()
+    try:
+        row = conn.execute(
+            "SELECT plan, created_at, is_admin FROM users WHERE id=?",
+            (user_id,)).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return True
+    expired, _ = _demo_status(dict(row))
+    return expired
+
+
 # ---------------------------------------------------------------- security
 
 MIN_PASSWORD_LEN = 8
@@ -437,6 +487,11 @@ def run_scan(user_id, scan_db_id, scan_id, start_mc, end_mc, cargo_types):
             for chunk_start in range(0, len(mcs), 10):
                 if stop.is_set():
                     break
+                # A demo trial can end while a scan is running — stop the
+                # run instead of letting it keep checking for free.
+                if _demo_expired_for(user_id):
+                    stop.set()
+                    break
                 chunk = mcs[chunk_start:chunk_start + 10]
                 futs = {ex.submit(_safe_check_mc, mc, cargo_types): mc
                         for mc in chunk}
@@ -515,6 +570,11 @@ def run_motus(user_id, run_db_id, kind, usdots, cargo_types):
                 max_workers=SCAN_WORKERS) as ex:
             for chunk_start in range(0, len(usdots), 10):
                 if stop.is_set():
+                    break
+                # A demo trial can end while a run is going — stop the run
+                # instead of letting it keep checking for free.
+                if _demo_expired_for(user_id):
+                    stop.set()
                     break
                 chunk = usdots[chunk_start:chunk_start + 10]
                 futs = {ex.submit(_safe_check_usdot, u, cargo_types): u
@@ -873,11 +933,13 @@ def login():
                 else:
                     # C1: signup NEVER creates an admin. The admin account
                     # comes only from ROAD_ADMIN_EMAIL / ROAD_ADMIN_PASSWORD.
+                    # A new signup is a 7-day demo trial (plan 'Demo');
+                    # only the admin can give Lifetime access.
                     conn.execute(
                         "INSERT INTO users (email, username, password_hash, is_admin,"
-                        " created_at) VALUES (?,?,?,?,?)",
+                        " plan, created_at) VALUES (?,?,?,?,?,?)",
                         (email, username, generate_password_hash(password),
-                         0, now_str()))
+                         0, "Demo", now_str()))
                     conn.commit()
                     user = conn.execute(
                         "SELECT * FROM users WHERE email=?", (email,)).fetchone()
@@ -1024,13 +1086,16 @@ def dashboard():
         totals = conn.execute(
             "SELECT COUNT(*) c, SUM(qualified) q FROM scans WHERE user_id=?",
             (user["id"],)).fetchone()
+        demo_expired, demo_days_left = _demo_status(user)
         return render_template(
             "dashboard.html", user=user, settings=settings,
             scan=dict(scan) if scan else None,
             log=[dict(r) for r in log],
             total_scanned=totals["c"] or 0,
             commodities=commodity_names(),
-            running=user["id"] in RUNNING_SCANS)
+            running=user["id"] in RUNNING_SCANS,
+            demo_expired=demo_expired,
+            demo_days_left=demo_days_left)
     finally:
         conn.close()
 
@@ -1089,6 +1154,10 @@ def api_status():
 @login_required
 def api_start_scan():
     user = current_user()
+    expired, _ = _demo_status(user)
+    if expired:
+        return jsonify({"ok": False,
+                        "error": DEMO_EXPIRED_MESSAGE}), 403
     # H5: at most 10 scan starts per user per hour.
     if _rate_limited(("scan", user["id"]), 10, 3600):
         return jsonify({"ok": False,
@@ -1156,6 +1225,10 @@ def api_resume_scan():
     user = current_user()
     if user["id"] in RUNNING_SCANS:
         return jsonify({"ok": False, "error": "A scan is already running."}), 400
+    expired, _ = _demo_status(user)
+    if expired:
+        return jsonify({"ok": False,
+                        "error": DEMO_EXPIRED_MESSAGE}), 403
     conn = store.connect()
     try:
         scan = conn.execute(
@@ -1345,6 +1418,10 @@ def motus_register_search():
 def _motus_page(kind, title):
     user = current_user()
     if request.method == "POST":
+        expired, _ = _demo_status(user)
+        if expired:
+            flash(DEMO_EXPIRED_MESSAGE)
+            return redirect(request.path)
         # H5: at most 10 Motus runs per user per hour.
         if _rate_limited(("motus", user["id"]), 10, 3600):
             flash("Too many Motus runs started — try again later.")
@@ -1887,6 +1964,81 @@ def admin_set_password():
     _bump_session_version(uid_int)
     _log_admin_action(admin["id"], uid_int, "admin_set_password")
     flash("Password updated.")
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/set-plan", methods=["POST"])
+@admin_required
+def admin_set_plan():
+    """Give a user Lifetime access or put them back on a Demo trial.
+
+    The admin account itself always stays Lifetime. A plan change takes
+    effect on the user's next request — plans are read fresh from the
+    database on every request, so no session invalidation is needed."""
+    admin = current_user()
+    uid = request.form.get("user_id")
+    plan = (request.form.get("plan") or "").strip()
+    try:
+        uid_int = int(uid) if uid else None
+    except (TypeError, ValueError):
+        uid_int = None
+    if not uid_int or plan not in ("Demo", "Lifetime"):
+        flash("Select a user and a plan (Demo or Lifetime).")
+        return redirect(url_for("admin_page"))
+    conn = store.connect()
+    try:
+        target = conn.execute("SELECT id, is_admin FROM users WHERE id=?",
+                              (uid_int,)).fetchone()
+        if not target:
+            flash("No such user.")
+            return redirect(url_for("admin_page"))
+        if target["is_admin"]:
+            flash("The admin account stays Lifetime.")
+            return redirect(url_for("admin_page"))
+        conn.execute("UPDATE users SET plan=? WHERE id=?", (plan, uid_int))
+        conn.commit()
+    finally:
+        conn.close()
+    _log_admin_action(admin["id"], uid_int,
+                      "admin_set_plan_%s" % plan.lower())
+    flash("Plan updated to %s." % plan)
+    return redirect(url_for("admin_page"))
+
+
+@app.route("/admin/create-user", methods=["POST"])
+@admin_required
+def admin_create_user():
+    """Create a demo account for one person — same rules as signup.
+
+    The account is always plan 'Demo' (a 7-day full trial) and never an
+    admin. The admin shares the login with the person afterwards."""
+    admin = current_user()
+    email = (request.form.get("email") or "").strip().lower()[:254]
+    username = (request.form.get("username") or "").strip()[:50]
+    password = request.form.get("password") or ""
+    if not email or not username or \
+            len(password) < MIN_PASSWORD_LEN or len(password) > 128:
+        flash("Email, username and a password of %d–128 characters are"
+              " required." % MIN_PASSWORD_LEN)
+        return redirect(url_for("admin_page"))
+    conn = store.connect()
+    try:
+        if conn.execute("SELECT id FROM users WHERE email=? OR username=?",
+                        (email, username)).fetchone():
+            flash("An account with this email or username already exists.")
+            return redirect(url_for("admin_page"))
+        cur = conn.execute(
+            "INSERT INTO users (email, username, password_hash, is_admin,"
+            " plan, created_at) VALUES (?,?,?,?,?,?)",
+            (email, username, generate_password_hash(password), 0, "Demo",
+             now_str()))
+        conn.commit()
+        new_id = cur.lastrowid
+    finally:
+        conn.close()
+    _log_admin_action(admin["id"], new_id, "admin_create_demo_user")
+    flash("Demo account created for %s — share the login with them."
+          % username)
     return redirect(url_for("admin_page"))
 
 
