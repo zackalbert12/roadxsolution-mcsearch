@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Error {{ code }}{% endblock %}
+{% block content %}
+<div class="hero"><h1>{{ title }}</h1><p>{{ message }}</p></div>
+<div class="card">
+  <p class="muted">Error {{ code }} — nothing was changed. {% if show_reload %}Reloading usually fixes it.{% endif %}</p>
+  <p>
+    {% if show_reload %}<a class="btn" href="" onclick="location.reload(); return false;">Reload the page</a>{% endif %}
+    <a class="btn secondary" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+  </p>
+</div>
+{% endblock %}
+{% block auth %}
+<div class="hero"><h1>{{ title }}</h1><p>{{ message }}</p></div>
+<div class="card">
+  <p class="muted">Error {{ code }} — nothing was changed. {% if show_reload %}Reloading usually fixes it.{% endif %}</p>
+  <p>
+    {% if show_reload %}<a class="btn" href="" onclick="location.reload(); return false;">Reload the page</a>{% endif %}
+    <a class="btn secondary" href="{{ url_for('login') }}">Back to Login</a>
+  </p>
+</div>
+{% endblock %}

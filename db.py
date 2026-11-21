@@ -162,13 +162,34 @@ CREATE INDEX IF NOT EXISTS idx_carriers_user_source ON carriers(user_id, source)
 CREATE INDEX IF NOT EXISTS idx_scan_log_user_scan ON scan_log(user_id, scan_id);
 CREATE INDEX IF NOT EXISTS idx_check_hist_user_mc ON check_history(user_id, mc_number);
 CREATE INDEX IF NOT EXISTS idx_scans_user ON scans(user_id);
+-- Audit fix 9: rate-limit counters live in SQLite (not per-process
+-- memory) so the 2 gunicorn workers share one count. One row per
+-- attempt; old rows are pruned on every check.
+CREATE TABLE IF NOT EXISTS rate_limit_events (
+    key TEXT NOT NULL,
+    ts REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_key_ts ON rate_limit_events(key, ts);
+-- Audit fix 9: failed reset-code guesses, shared across workers.
+CREATE TABLE IF NOT EXISTS reset_failures (
+    email TEXT PRIMARY KEY,
+    fails INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL
+);
 """
 
 
 def connect():
     os.makedirs(DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    # Audit fix 5: a 30 s busy timeout plus WAL mode, so scan writes from
+    # one worker do not fail outright when another worker writes at the
+    # same moment (the old defaults were 5 s and rollback-journal).
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.Error:
+        pass  # e.g. read-only or in-memory DBs — journal mode is best-effort
     return conn
 
 

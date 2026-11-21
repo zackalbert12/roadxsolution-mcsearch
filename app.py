@@ -4,7 +4,6 @@ A dispatcher MC-verification workspace: scan FMCSA MC ranges live against
 SAFER, keep qualified carriers, Motus USDOT checks, notes, pickup lines,
 reports and admin user management. Deployable on Render's free tier.
 """
-import collections
 import concurrent.futures
 import csv
 import hashlib
@@ -32,11 +31,22 @@ from commodity import COMMODITIES, commodity_names, filter_carriers_by_commodity
 from pickup_lines import PICKUP_LINES, CATEGORIES, lines_for
 
 app = Flask(__name__)
-# H4: no hardcoded fallback key. If SECRET_KEY is unset, generate a random
-# key for this process only (sessions will not survive a restart) and warn
-# loudly — a published constant would let anyone forge any session.
+# H4: no hardcoded fallback key. Audit fix 3 — if SECRET_KEY is unset,
+# refuse to start in production: with 2 gunicorn workers a random key
+# per process would sign sessions differently, and ~half of all
+# CSRF-protected POSTs would 403 nondeterministically. Production is
+# RENDER set, or ALLOW_INSECURE_DEV not explicitly "1". Local dev
+# (no RENDER + ALLOW_INSECURE_DEV=1) may keep a generated key.
 _secret = os.environ.get("SECRET_KEY")
 if not _secret:
+    _is_production = bool(os.environ.get("RENDER")) or \
+        os.environ.get("ALLOW_INSECURE_DEV") != "1"
+    if _is_production:
+        raise SystemExit(
+            "Refusing to start: SECRET_KEY is not set. Set it in production"
+            " (Render generates one via render.yaml) — without it, each"
+            " worker signs sessions with a different key and logins and"
+            " form submissions fail at random.")
     _secret = secrets.token_hex(32)
     print("WARNING: SECRET_KEY is not set — generated a random key for this"
           " process only. Set SECRET_KEY in production.", flush=True)
@@ -120,30 +130,77 @@ def _demo_expired_for(user_id):
 
 MIN_PASSWORD_LEN = 8
 
-# --- in-memory rate limiter (per process; with 2 gunicorn workers an
-# attacker gets 2x the allowance — acceptable for this app, and the
-# limits below are generous for real use) -------------------------------
-_RATE_LIMITS = {}   # key -> deque of timestamps (seconds)
-_RATE_LOCK = threading.Lock()
-_RESET_FAILURES = {}   # email -> failed reset-code attempts
+# --- rate limiting (H1/H2): counters live in SQLite (rate_limit_events /
+# reset_failures tables, db.py) so the 2 gunicorn workers share ONE
+# count. Audit fix 9 — the old in-memory dicts gave an attacker 2x the
+# allowance and let ~10 reset-code guesses through across workers.
+_RATE_MAX_WINDOW = 3600  # longest window in use (login-h); prune older rows
 
 
 def _rate_limited(key, limit, window):
     """True when `key` has already used `limit` calls in the last
-    `window` seconds; otherwise records this call and returns False."""
+    `window` seconds; otherwise records this call and returns False.
+    `key` is a tuple (namespace, identifier) — stored as one string."""
     now = time.time()
-    with _RATE_LOCK:
-        if len(_RATE_LIMITS) > 5000:
-            for k in [k for k, dq in _RATE_LIMITS.items()
-                      if not dq or dq[0] <= now - 3600]:
-                del _RATE_LIMITS[k]
-        dq = _RATE_LIMITS.setdefault(key, collections.deque())
-        while dq and dq[0] <= now - window:
-            dq.popleft()
-        if len(dq) >= limit:
+    k = ":".join(str(p) for p in key)
+    conn = store.connect()
+    try:
+        # Prune rows older than any window we use, then count this
+        # key's attempts inside the window. The DELETE takes the write
+        # lock first, so concurrent workers serialise here.
+        conn.execute("DELETE FROM rate_limit_events WHERE ts <= ?",
+                     (now - _RATE_MAX_WINDOW,))
+        n = conn.execute(
+            "SELECT COUNT(*) FROM rate_limit_events WHERE key=? AND ts > ?",
+            (k, now - window)).fetchone()[0]
+        if n >= limit:
+            conn.commit()
             return True
-        dq.append(now)
+        conn.execute("INSERT INTO rate_limit_events (key, ts) VALUES (?,?)",
+                     (k, now))
+        conn.commit()
         return False
+    finally:
+        conn.close()
+
+
+def _reset_fails(email):
+    """Failed reset-code guesses recorded for `email` (shared count)."""
+    conn = store.connect()
+    try:
+        row = conn.execute("SELECT fails FROM reset_failures WHERE email=?",
+                           (email,)).fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
+
+def _reset_fails_inc(email):
+    """Record one more failed reset-code guess; returns the new total."""
+    conn = store.connect()
+    try:
+        conn.execute(
+            "INSERT INTO reset_failures (email, fails, updated_at)"
+            " VALUES (?,?,?)"
+            " ON CONFLICT(email) DO UPDATE SET fails=fails+1,"
+            " updated_at=excluded.updated_at",
+            (email, 1, time.time()))
+        conn.commit()
+        row = conn.execute("SELECT fails FROM reset_failures WHERE email=?",
+                           (email,)).fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
+
+def _reset_fails_clear(email):
+    """Forget the failed-guess count (correct code used / code expired)."""
+    conn = store.connect()
+    try:
+        conn.execute("DELETE FROM reset_failures WHERE email=?", (email,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # --- CSRF (M1): one token per session, sent as a hidden form field or an
@@ -194,6 +251,54 @@ def _security_headers(resp):
         "font-src 'self'; frame-ancestors 'none'; base-uri 'self'; "
         "form-action 'self'")
     return resp
+
+
+# --- friendly error pages (audit fix 2): the old defaults were Flask's
+# bare "Forbidden / Not Found / Internal Server Error" pages with no way
+# back. Rendering a template runs _inject_csrf, which re-issues a valid
+# CSRF token, so a 403 can be fixed by one reload.
+@app.errorhandler(403)
+def _handle_403(err):
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False,
+                        "error": "Session expired — reload the page and try again."}), 403
+    if request.path.startswith("/admin") and current_user():
+        title = "Admin only"
+        message = "Only the site admin can open this page."
+        show_reload = False
+    else:
+        title = "Session expired"
+        message = ("Your session expired, or this page was opened before the "
+                   "site restarted. Reload the page and try again.")
+        show_reload = True
+    return render_template("error_page.html", code=403, title=title,
+                           message=message, show_reload=show_reload,
+                           user=current_user()), 403
+
+
+@app.errorhandler(404)
+def _handle_404(err):
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error": "Not found."}), 404
+    return render_template("error_page.html", code=404,
+                           title="Page not found",
+                           message="This page does not exist, or it was moved.",
+                           show_reload=False,
+                           user=current_user()), 404
+
+
+@app.errorhandler(500)
+def _handle_500(err):
+    app.logger.exception("Unhandled error on %s", request.path)
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False,
+                        "error": "Something went wrong. Please try again."}), 500
+    return render_template("error_page.html", code=500,
+                           title="Something went wrong",
+                           message=("Please reload the page and try again. If it "
+                                    "keeps happening, let the site admin know."),
+                           show_reload=True,
+                           user=current_user()), 500
 
 
 # --- admin seeding (C1): the admin comes from env vars, NEVER from
@@ -272,8 +377,15 @@ def _log_admin_action(admin_id, target_user_id, action):
 
 def _login_user(user, remember):
     """Fresh session on login/signup (M4): clear any pre-login session,
-    then store the user id and the session version (M2)."""
+    then store the user id and the session version (M2).
+
+    Audit fix 1: the CSRF token survives the clear. A login/signup form
+    rendered before this login keeps working — without this, its token
+    died with the old session and the submit 403'd."""
+    csrf = session.get("_csrf")
     session.clear()
+    if csrf:
+        session["_csrf"] = csrf
     session["user_id"] = user["id"]
     session["sv"] = user["session_version"]
     session.permanent = bool(remember)
@@ -329,7 +441,10 @@ def get_settings(user_id):
     try:
         row = conn.execute("SELECT * FROM settings WHERE user_id=?", (user_id,)).fetchone()
         if row is None:
-            conn.execute("INSERT INTO settings (user_id) VALUES (?)", (user_id,))
+            # Audit fix 6: INSERT OR IGNORE — two simultaneous first
+            # requests for a new user used to race and the second 500'd
+            # on the PRIMARY KEY. Re-select afterwards either way.
+            conn.execute("INSERT OR IGNORE INTO settings (user_id) VALUES (?)", (user_id,))
             conn.commit()
             row = conn.execute("SELECT * FROM settings WHERE user_id=?", (user_id,)).fetchone()
         return dict(row)
@@ -350,8 +465,13 @@ def selected_cargo(settings):
 
 def carrier_dict(row):
     d = dict(row)
-    d["cargo_carried"] = json.loads(d["cargo_carried"] or "[]")
-    d["cargo_categories"] = json.loads(d["cargo_categories"] or "[]")
+    # Audit fix 10: a malformed stored value (only reachable by direct
+    # DB edits) used to 500 every list/CSV request for that user.
+    for key in ("cargo_carried", "cargo_categories"):
+        try:
+            d[key] = json.loads(d[key] or "[]")
+        except (ValueError, TypeError):
+            d[key] = []
     return d
 
 
@@ -471,6 +591,37 @@ def _write_scan_result(user_id, scan_db_id, scan_id, rec):
             conn.close()
 
 
+def _count_scan_write_error(user_id, scan_db_id, scan_id, rec):
+    """Best-effort fallback when _write_scan_result itself fails: count
+    that MC as an error so the scan keeps going and the user sees it.
+    Never raises — a failure here must not kill the scan either."""
+    mc = str(rec.get("mc_number") or "")
+    try:
+        mc_int = int(mc)
+    except (TypeError, ValueError):
+        mc_int = 0
+    try:
+        with _DB_WRITE_LOCK:
+            conn = store.connect()
+            try:
+                conn.execute(
+                    "INSERT INTO error_mcs (user_id, scan_id, source,"
+                    " mc_number, error, checked_at) VALUES (?,?,?,?,?,?)",
+                    (user_id, scan_id, "scan", mc,
+                     "Could not save this check — please retry this MC.",
+                     now_str()))
+                conn.execute(
+                    "UPDATE scans SET current_mc=MAX(COALESCE(current_mc,0),?),"
+                    " checked=checked+1, errors=errors+1 WHERE id=?",
+                    (mc_int, scan_db_id))
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception:
+        app.logger.exception("Scan %s: could not record write error for MC %s",
+                             scan_id, mc)
+
+
 def run_scan(user_id, scan_db_id, scan_id, start_mc, end_mc, cargo_types):
     """Background thread: walk an MC range, checking each against SAFER.
 
@@ -500,8 +651,19 @@ def run_scan(user_id, scan_db_id, scan_id, start_mc, end_mc, cargo_types):
                         for f in futs:
                             f.cancel()
                         break
-                    _write_scan_result(user_id, scan_db_id, scan_id,
-                                       fut.result())
+                    rec = fut.result()
+                    try:
+                        _write_scan_result(user_id, scan_db_id, scan_id, rec)
+                    except Exception:
+                        # Audit fix 5: one failed write used to kill the
+                        # whole scan silently (and the scan still showed
+                        # "Completed"). Log it, count the MC as an error,
+                        # and keep checking the rest.
+                        app.logger.exception(
+                            "Scan %s: failed to write result for MC %s",
+                            scan_id, rec.get("mc_number"))
+                        _count_scan_write_error(user_id, scan_db_id, scan_id,
+                                                rec)
                 if stop.is_set():
                     break
     finally:
@@ -935,16 +1097,24 @@ def login():
                     # comes only from ROAD_ADMIN_EMAIL / ROAD_ADMIN_PASSWORD.
                     # A new signup is a 7-day demo trial (plan 'Demo');
                     # only the admin can give Lifetime access.
-                    conn.execute(
-                        "INSERT INTO users (email, username, password_hash, is_admin,"
-                        " plan, created_at) VALUES (?,?,?,?,?,?)",
-                        (email, username, generate_password_hash(password),
-                         0, "Demo", now_str()))
-                    conn.commit()
-                    user = conn.execute(
-                        "SELECT * FROM users WHERE email=?", (email,)).fetchone()
-                    _login_user(user, request.form.get("remember"))
-                    return redirect(url_for("dashboard"))
+                    # Audit fix 4: the existence check above and this
+                    # INSERT can race on a double-click — catch the
+                    # UNIQUE violation instead of 500'ing.
+                    try:
+                        conn.execute(
+                            "INSERT INTO users (email, username, password_hash, is_admin,"
+                            " plan, created_at) VALUES (?,?,?,?,?,?)",
+                            (email, username, generate_password_hash(password),
+                             0, "Demo", now_str()))
+                        conn.commit()
+                    except sqlite3.IntegrityError:
+                        conn.rollback()
+                        error = "An account with this email or username already exists. Try logging in instead."
+                    else:
+                        user = conn.execute(
+                            "SELECT * FROM users WHERE email=?", (email,)).fetchone()
+                        _login_user(user, request.form.get("remember"))
+                        return redirect(url_for("dashboard"))
             else:
                 ident = (request.form.get("identifier") or "").strip()
                 password = request.form.get("password") or ""
@@ -980,7 +1150,14 @@ def logout():
     user = current_user()
     if user:
         _bump_session_version(user["id"])
+    # Audit fix 1: keep the CSRF token across logout too — a login form
+    # rendered before the logout keeps working. This is safe: the token
+    # is not an auth credential, and the session-version bump above has
+    # already killed the old login on every device.
+    csrf = session.get("_csrf")
     session.clear()
+    if csrf:
+        session["_csrf"] = csrf
     return redirect(url_for("login"))
 
 
@@ -992,6 +1169,13 @@ def forgot():
     error = ""
     if request.method == "POST":
         email = (request.form.get("email") or "").strip().lower()[:254]
+        # Audit fix 8: like /reset, limit code requests (5 per 15 min per
+        # email) so the admin's Password Reset Requests list cannot be
+        # flooded. Applied before the lookup — never reveal whether the
+        # email has an account.
+        if _rate_limited(("forgot", email), 5, 900):
+            error = "Too many reset requests for this email. Try again later."
+            return render_template("forgot.html", message=message, error=error), 429
         conn = store.connect()
         try:
             user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
@@ -1035,16 +1219,14 @@ def reset_password():
                     " ORDER BY id DESC LIMIT 1", (user["id"], code)).fetchone()
             if not user or not row:
                 # H2: after 5 failed guesses the live code is invalidated,
-                # so the 6-digit code cannot be brute-forced.
-                with _RATE_LOCK:
-                    fails = _RESET_FAILURES.get(email, 0) + 1
-                    _RESET_FAILURES[email] = fails
+                # so the 6-digit code cannot be brute-forced. The count
+                # lives in SQLite (audit fix 9) — shared across workers.
+                fails = _reset_fails_inc(email)
                 if user and fails >= 5:
                     conn.execute("UPDATE password_resets SET used=1"
                                  " WHERE user_id=? AND used=0", (user["id"],))
                     conn.commit()
-                    with _RATE_LOCK:
-                        _RESET_FAILURES.pop(email, None)
+                    _reset_fails_clear(email)
                 error = "Invalid email or code."
             elif row["expires_at"] < now_str():
                 error = "That code has expired. Request a new one."
@@ -1055,8 +1237,7 @@ def reset_password():
                              (generate_password_hash(password), user["id"]))
                 conn.execute("UPDATE password_resets SET used=1 WHERE id=?", (row["id"],))
                 conn.commit()
-                with _RATE_LOCK:
-                    _RESET_FAILURES.pop(email, None)
+                _reset_fails_clear(email)
                 _bump_session_version(user["id"])  # M2: kill other sessions
                 _log_admin_action(None, user["id"], "password_reset")
                 done = True
@@ -1124,8 +1305,13 @@ def api_status():
             (user["id"], scan["scan_id"])).fetchall()
         elapsed = scan["duration_seconds"] or 0
         if scan["status"] == "running" and scan["started_at"]:
-            elapsed = int((datetime.now() - datetime.strptime(
-                scan["started_at"], "%Y-%m-%d %H:%M:%S")).total_seconds())
+            # Audit fix 10: a malformed stored timestamp (only reachable
+            # by direct DB edits) used to 500 every status poll.
+            try:
+                elapsed = int((datetime.now() - datetime.strptime(
+                    scan["started_at"], "%Y-%m-%d %H:%M:%S")).total_seconds())
+            except (TypeError, ValueError):
+                elapsed = 0
         rate = (scan["checked"] / elapsed * 60) if elapsed > 0 else 0
         remaining = scan["total"] - scan["checked"]
         eta = int(remaining / rate * 60) if rate > 0 else 0
@@ -1625,11 +1811,16 @@ def notes():
             return redirect(url_for("notes"))
         conn = store.connect()
         try:
+            # Audit fix 10: whitelist the priority — anything else falls
+            # back to Normal instead of being stored verbatim.
+            priority = request.form.get("priority") or "Normal"
+            if priority not in ("Low", "Normal", "High", "Urgent"):
+                priority = "Normal"
             conn.execute(
                 "INSERT INTO notes (user_id, mc_number, title, text, tags, priority,"
                 " reminder_date, created_at) VALUES (?,?,?,?,?,?,?,?)",
                 (user["id"], mc_number, title, text, tags,
-                 request.form.get("priority") or "Normal",
+                 priority,
                  request.form.get("reminder_date") or "", now_str()))
             conn.commit()
         finally:
@@ -1807,11 +1998,20 @@ def settings_page():
                      user["id"]))
                 message = "Scanner settings saved."
             elif section == "appearance":
+                # Audit fix 10: whitelist the allowed values — anything
+                # else falls back to the default instead of being stored.
+                theme = request.form.get("theme") or "Light"
+                layout = request.form.get("layout") or "Comfortable"
+                sidebar = request.form.get("sidebar") or "Expanded"
+                if theme not in ("Light", "Dark", "System"):
+                    theme = "Light"
+                if layout not in ("Comfortable", "Compact"):
+                    layout = "Comfortable"
+                if sidebar not in ("Expanded", "Collapsed"):
+                    sidebar = "Expanded"
                 conn.execute(
                     "UPDATE settings SET theme=?, layout=?, sidebar=? WHERE user_id=?",
-                    (request.form.get("theme") or "Light",
-                     request.form.get("layout") or "Comfortable",
-                     request.form.get("sidebar") or "Expanded", user["id"]))
+                    (theme, layout, sidebar, user["id"]))
                 message = "Appearance saved."
             elif section == "notifications":
                 conn.execute(
@@ -2027,12 +2227,19 @@ def admin_create_user():
                         (email, username)).fetchone():
             flash("An account with this email or username already exists.")
             return redirect(url_for("admin_page"))
-        cur = conn.execute(
-            "INSERT INTO users (email, username, password_hash, is_admin,"
-            " plan, created_at) VALUES (?,?,?,?,?,?)",
-            (email, username, generate_password_hash(password), 0, "Demo",
-             now_str()))
-        conn.commit()
+        # Audit fix 4: same double-submit race as signup — catch the
+        # UNIQUE violation instead of 500'ing.
+        try:
+            cur = conn.execute(
+                "INSERT INTO users (email, username, password_hash, is_admin,"
+                " plan, created_at) VALUES (?,?,?,?,?,?)",
+                (email, username, generate_password_hash(password), 0, "Demo",
+                 now_str()))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            flash("An account with this email or username already exists.")
+            return redirect(url_for("admin_page"))
         new_id = cur.lastrowid
     finally:
         conn.close()

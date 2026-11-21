@@ -110,6 +110,13 @@ function pill(status){
 async function poll(){
   try {
     const r = await fetch('{{ url_for("api_status") }}');
+    const ct = r.headers.get('content-type') || '';
+    if (r.status === 403 || !ct.includes('application/json')) {
+      // Audit fix 7: a 403 page (or a login-page redirect, which is
+      // HTML) used to throw inside r.json() and fail silently. Show
+      // the message instead, and keep polling.
+      showScanMessage('Session expired — reload the page and try again.');
+    } else {
     const d = await r.json();
     document.getElementById('st-checked').textContent = d.current + (d.total ? ' / ' + d.total : '');
     document.getElementById('st-qualified').textContent = d.results_count;
@@ -133,6 +140,7 @@ async function poll(){
     const body = document.getElementById('log-body');
     body.innerHTML = d.recent_log.map(x =>
       '<tr><td>' + esc(x.mc_number) + '</td><td>' + pill(x.status) + '</td><td>' + esc(x.entity) + '</td><td>' + esc(x.power_units) + '</td><td>' + esc(x.cargo) + '</td><td>' + esc(x.checked_at) + '</td><td>' + esc(x.note) + '</td></tr>').join('');
+    }
   } catch(e) {}
   setTimeout(poll, 1500);
 }
@@ -154,19 +162,43 @@ async function startScan(ev){
   fd.append('csrf_token', csrfToken());
   fd.append('start_mc', s);
   fd.append('end_mc', e);
-  const r = await fetch('{{ url_for("api_start_scan") }}', {method:'POST', body: fd});
-  const d = await r.json();
+  // Audit fix 7: check the response before parsing JSON — a 403 page
+  // (or a login redirect) is HTML, and r.json() on it used to throw
+  // silently so the button just did nothing.
+  let r;
+  try {
+    r = await fetch('{{ url_for("api_start_scan") }}', {method:'POST', body: fd});
+  } catch(e) {
+    showScanMessage('Could not start scan — check your connection and try again.');
+    return false;
+  }
+  if (r.status === 403) { showScanMessage('Session expired — reload the page and try again.'); return false; }
+  if (!(r.headers.get('content-type') || '').includes('application/json')) { showScanMessage('Session expired — reload the page and try again.'); return false; }
+  let d;
+  try { d = await r.json(); } catch(e) { showScanMessage('Could not start scan. Please reload the page and try again.'); return false; }
   if (!d.ok) showScanMessage(d.error || 'Could not start scan.');
   return false;
 }
 async function resumeScan(){
-  const r = await fetch('{{ url_for("api_resume_scan") }}', {method:'POST', headers:{'X-CSRF-Token': csrfToken()}});
-  const d = await r.json();
+  let r;
+  try {
+    r = await fetch('{{ url_for("api_resume_scan") }}', {method:'POST', headers:{'X-CSRF-Token': csrfToken()}});
+  } catch(e) {
+    showScanMessage('Could not resume scan — check your connection and try again.');
+    return;
+  }
+  if (r.status === 403) { showScanMessage('Session expired — reload the page and try again.'); return; }
+  if (!(r.headers.get('content-type') || '').includes('application/json')) { showScanMessage('Session expired — reload the page and try again.'); return; }
+  let d;
+  try { d = await r.json(); } catch(e) { showScanMessage('Could not resume scan. Please reload the page and try again.'); return; }
   if (!d.ok) showScanMessage(d.error || 'Could not resume scan.');
   else showScanMessage('Scan resumed from MC-' + d.resumed_from + '.');
 }
 async function stopScan(){
-  await fetch('{{ url_for("api_stop_scan") }}', {method:'POST', headers:{'X-CSRF-Token': csrfToken()}});
+  try {
+    const r = await fetch('{{ url_for("api_stop_scan") }}', {method:'POST', headers:{'X-CSRF-Token': csrfToken()}});
+    if (r.status === 403) showScanMessage('Session expired — reload the page and try again.');
+  } catch(e) {}
 }
 function applyCommodity(v){
   const note = document.getElementById('commodity-note');
