@@ -421,6 +421,8 @@ input[type=date], select, textarea { padding: 12px 14px; font-size: 15px; }
 .break-all { word-break: break-all; }
 .flex-gap-6 { display: flex; gap: 6px; }
 .overflow-x-auto { overflow-x: auto; }
+/* Reports chart SVG (server-generated in _daily_chart_svg): no inline style */
+.chart-svg { max-width: 680px; display: block; }
 .flex-gap-6-center { display: flex; gap: 6px; align-items: center; }
 .flex-gap-8 { display: flex; gap: 8px; }
 /* Narrow inputs (admin set-password, custom-months): element-qualified so

@@ -3949,7 +3949,7 @@ def _daily_chart_svg(daily):
 
     parts = ['<svg viewBox="0 0 %d %d" width="100%%" role="img" '
              'aria-label="Scans per day chart" '
-             'style="max-width:680px;display:block">'
+             'class="chart-svg">'
              % (w, h)]
     # Gridlines + left (count) axis labels.
     for frac, lab in ((0, "0"), (0.5, str(max_v // 2)),
