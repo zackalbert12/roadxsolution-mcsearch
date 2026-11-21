@@ -126,13 +126,33 @@ p { color: var(--grey-text); line-height: 1.5; }
   background: var(--brand); color: #fff; align-items: center; justify-content: center;
   font-weight: 700; margin-right: 8px; vertical-align: middle; }
 .content { padding: 24px; flex: 1; width: 100%; max-width: 1280px; margin: 0 auto; }
-.footer { text-align: center; color: #b6c2d2; font-size: 12px;
-  padding: 18px; border-top: 3px solid var(--brand); background: var(--navy); }
+/* ---- Footer: navy/red, three neat columns + copyright bar ---- */
+.footer { background: var(--navy); border-top: 3px solid var(--brand);
+  color: #b6c2d2; padding: 24px 24px 16px; }
+.footer-inner { max-width: 1280px; margin: 0 auto; display: flex;
+  flex-wrap: wrap; gap: 28px; align-items: flex-start;
+  justify-content: space-between; }
+.footer-col { display: flex; flex-direction: column; gap: 6px; min-width: 180px; }
 .footer-tag { color: #fff; font-weight: 800; letter-spacing: 2px; font-size: 12px; }
+.footer-note { font-size: 13px; }
+.footer-label { color: #fff; font-weight: 700; font-size: 11px;
+  letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 2px; }
+.footer-contact-item { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.footer a { color: #fff; text-decoration: none; }
+.footer a:hover { text-decoration: underline; }
+.footer-links a { color: #b6c2d2; font-size: 13px; }
+.footer-links a:hover { color: #fff; }
+.footer-copy { max-width: 1280px; margin: 18px auto 0; padding-top: 14px;
+  border-top: 1px solid rgba(255,255,255,.15); text-align: center;
+  color: #8fa0b5; font-size: 12px; }
+@media (max-width: 700px) {
+  .footer-inner { flex-direction: column; gap: 18px; }
+  .footer { padding: 20px 16px 14px; }
+}
 
 /* cards / stats */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-  padding: 18px; margin-bottom: 18px; }
+  padding: 18px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(15,23,42,.06); }
 .hero { background: var(--hero-bg);
   border: 1px solid var(--hero-border); border-radius: 12px; padding: 20px 22px; margin-bottom: 18px; }
 .hero h1 { margin-bottom: 4px; }
@@ -147,19 +167,19 @@ p { color: var(--grey-text); line-height: 1.5; }
   .grid.cols-7, .grid.cols-4, .grid.cols-3, .grid.cols-2 { grid-template-columns: 1fr 1fr; }
   .sidebar { width: 200px; } .main { margin-left: 200px; }
 }
-.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: 0 1px 3px rgba(15,23,42,.06); }
 .stat .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--grey-text); }
 .stat .value { font-size: 26px; font-weight: 800; color: var(--heading); margin-top: 4px; }
 .stat .value.green { color: var(--green); }
 .stat .value.orange { color: var(--brand); }
 .stat .value.red { color: var(--red); }
-.progress { height: 12px; background: #e5e7eb; border-radius: 6px; overflow: hidden; }
+.progress { height: 12px; background: var(--border); border-radius: 6px; overflow: hidden; }
 .progress > div { height: 100%; background: var(--brand); }
 
 /* forms / buttons */
 .btn { display: inline-block; border: none; border-radius: 8px; padding: 10px 18px;
   font-size: 14px; font-weight: 600; cursor: pointer; background: var(--brand);
-  color: #fff; text-decoration: none; }
+  color: #fff; text-decoration: none; transition: background .15s ease; }
 .btn:hover { background: var(--brand-dark); text-decoration: none; }
 .btn.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
 .btn.secondary:hover { background: var(--brand-pale); }
@@ -312,6 +332,11 @@ input[type=date], select, textarea { padding: 12px 14px; font-size: 15px; }
   .detail-label { flex-basis: 100px; }
 }
 
+/* ---- Fleet Size filter: compact Min/Max boxes, same size as the
+   Commodities select in the scan form ---- */
+.fleet-row .fleet-box { flex: 0 0 190px; min-width: 0; }
+.fleet-row .fleet-hint { flex: 1; min-width: 200px; }
+
 /* ---- Multi-select commodity filter (Qualified Carriers) ---- */
 .commodity-filter { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px; }
 .commodity-label { display: block; font-weight: 600; font-size: 13px; color: var(--heading); margin-bottom: 8px; }
@@ -319,7 +344,7 @@ input[type=date], select, textarea { padding: 12px 14px; font-size: 15px; }
 .chip-check { position: relative; }
 .chip-check input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .chip-check span { display: inline-block; padding: 6px 13px; border: 1px solid var(--border);
-  border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--text-muted);
+  border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--text);
   background: var(--surface); cursor: pointer; }
 .chip-check span:hover { border-color: var(--brand); color: var(--brand); }
 .chip-check input:checked + span { background: var(--brand); border-color: var(--brand); color: #fff; }
@@ -357,3 +382,6 @@ input[type=date], select, textarea { padding: 12px 14px; font-size: 15px; }
   .search-field, .search-field-type, .search-field-btn { flex: 1 1 auto; min-width: 0; }
   .search-btn { width: 100%; }
 }
+
+/* WhatsApp icon next to the owner phone number */
+.wa-icon { width: 1em; height: 1em; vertical-align: -0.15em; margin-right: 0.2em; flex: none; }

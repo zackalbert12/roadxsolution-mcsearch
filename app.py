@@ -37,7 +37,8 @@ except ImportError:  # pragma: no cover - missing dependency
 import db as store
 from safer import check_mc, check_usdot, search_by_name, fetch_company_officer
 from commodity import (COMMODITIES, EQUIPMENT_COMMODITIES, commodity_names,
-                        expected_trucks, filter_carriers_by_commodity)
+                        equipment_label, expected_trucks,
+                        filter_carriers_by_commodity)
 from pickup_lines import PICKUP_LINES, CATEGORIES, lines_for
 
 app = Flask(__name__)
@@ -93,6 +94,20 @@ def now_time():
 DEMO_TRIAL_DAYS = 7
 DEMO_EXPIRED_MESSAGE = ("Your 7-day demo trial has ended. Ask the site "
                         "admin for Lifetime access.")
+DEMO_SCAN_LIMIT = 10000
+DEMO_SCAN_LIMIT_MESSAGE = ("Demo allows at most 10,000 MC numbers per scan;"
+                           " ask the owner for Lifetime for larger scans.")
+
+
+def _demo_scan_too_big(user, start_mc, end_mc):
+    """True when a Demo user tries to scan more than DEMO_SCAN_LIMIT MCs.
+
+    Owner (admin) and Lifetime accounts have no limit. Enforced at the
+    scan start API endpoints — the only ways run_scan is launched.
+    """
+    if user["is_admin"] or user["plan"] != "Demo":
+        return False
+    return end_mc - start_mc + 1 > DEMO_SCAN_LIMIT
 
 
 def _demo_status(user):
@@ -695,12 +710,17 @@ def _count_scan_write_error(user_id, scan_db_id, scan_id, rec):
                              scan_id, mc)
 
 
-def run_scan(user_id, scan_db_id, scan_id, start_mc, end_mc, cargo_types):
+def run_scan(user_id, scan_db_id, scan_id, start_mc, end_mc, cargo_types,
+             fleet=(None, None)):
     """Background thread: walk an MC range, checking each against SAFER.
 
     Checks run in parallel (ROAD_SCAN_WORKERS threads, default 5) with
     rotating proxies — about 5-7 checks/sec instead of ~1/sec.
     Submitted in small chunks so Stop stays responsive.
+
+    fleet=(min_pu, max_pu) is the scan-time Fleet Size filter from the
+    Dashboard scan form: a carrier only qualifies when its power units
+    sit inside the range (None = no limit on that side).
     """
     stop = RUNNING_SCANS[user_id]["stop"]
     started = time.time()
@@ -725,6 +745,25 @@ def run_scan(user_id, scan_db_id, scan_id, start_mc, end_mc, cargo_types):
                             f.cancel()
                         break
                     rec = fut.result()
+                    if rec.get("qualified"):
+                        # Scan-time Fleet Size filter: an otherwise
+                        # qualified carrier outside the set power-units
+                        # range is skipped, not qualified.
+                        min_pu, max_pu = fleet
+                        if not _fleet_in_range(rec.get("power_units"),
+                                               min_pu, max_pu):
+                            if min_pu is not None and max_pu is not None:
+                                rng = "%d–%d" % (min_pu, max_pu)
+                            elif min_pu is not None:
+                                rng = "at least %d" % min_pu
+                            else:
+                                rng = "at most %d" % max_pu
+                            rec["qualified"] = False
+                            rec["status"] = "Skip — Fleet size"
+                            rec["note"] = ("Fleet size %s power units is"
+                                           " outside the %s range"
+                                           % (rec.get("power_units")
+                                              or "unknown", rng))
                     try:
                         _write_scan_result(user_id, scan_db_id, scan_id, rec)
                     except Exception:
@@ -1525,16 +1564,23 @@ def api_start_scan():
     if end_mc < start_mc or end_mc - start_mc > 100000:
         return jsonify({"ok": False,
                         "error": "Range must be valid and at most 100,000 MCs."}), 400
+    if _demo_scan_too_big(user, start_mc, end_mc):
+        return jsonify({"ok": False,
+                        "error": DEMO_SCAN_LIMIT_MESSAGE}), 403
     settings = get_settings(user["id"])
     cargo_types = selected_cargo(settings)
+    # Scan-time Fleet Size filter from the Dashboard scan form (empty =
+    # no limit on that side); stored on the scan so a resume reuses it.
+    min_pu = _parse_pu(request.form.get("min_pu") or body.get("min_pu"))
+    max_pu = _parse_pu(request.form.get("max_pu") or body.get("max_pu"))
     scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     conn = store.connect()
     try:
         cur = conn.execute(
             "INSERT INTO scans (user_id, scan_id, start_mc, end_mc, total,"
-            " started_at) VALUES (?,?,?,?,?,?)",
+            " started_at, min_pu, max_pu) VALUES (?,?,?,?,?,?,?,?)",
             (user["id"], scan_id, start_mc, end_mc, end_mc - start_mc + 1,
-             now_str()))
+             now_str(), min_pu, max_pu))
         conn.commit()
         scan_db_id = cur.lastrowid
     finally:
@@ -1542,7 +1588,8 @@ def api_start_scan():
     stop = threading.Event()
     t = threading.Thread(target=run_scan,
                          args=(user["id"], scan_db_id, scan_id, start_mc,
-                               end_mc, cargo_types), daemon=True)
+                               end_mc, cargo_types, (min_pu, max_pu)),
+                         daemon=True)
     RUNNING_SCANS[user["id"]] = {"stop": stop, "thread": t}
     t.start()
     return jsonify({"ok": True, "scan_id": scan_id})
@@ -1582,12 +1629,17 @@ def api_resume_scan():
         scan = dict(scan)
     finally:
         conn.close()
+    if _demo_scan_too_big(user, scan["start_mc"], scan["end_mc"]):
+        return jsonify({"ok": False,
+                        "error": DEMO_SCAN_LIMIT_MESSAGE}), 403
     resume_from = (scan["current_mc"] or scan["start_mc"] - 1) + 1
     if resume_from > scan["end_mc"]:
         return jsonify({"ok": False,
                         "error": "That scan already finished."}), 400
     settings = get_settings(user["id"])
     cargo_types = selected_cargo(settings)
+    # The paused scan keeps the Fleet Size range it started with.
+    fleet = (scan.get("min_pu"), scan.get("max_pu"))
     conn = store.connect()
     try:
         conn.execute(
@@ -1600,7 +1652,8 @@ def api_resume_scan():
     stop = threading.Event()
     t = threading.Thread(target=run_scan,
                          args=(user["id"], scan["id"], scan["scan_id"],
-                               resume_from, scan["end_mc"], cargo_types),
+                               resume_from, scan["end_mc"], cargo_types,
+                               fleet),
                          daemon=True)
     RUNNING_SCANS[user["id"]] = {"stop": stop, "thread": t}
     t.start()
@@ -1623,19 +1676,23 @@ def api_scan_csv():
         conn.close()
 
 
+def _full_address(c):
+    """Full address for CSV export: street + city + state, skipping
+    empty parts, joined with commas."""
+    parts = [p.strip() for p in (c.get("address_line1") or "",
+                                 c.get("city") or "",
+                                 c.get("state") or "") if p.strip()]
+    return ", ".join(parts)
+
+
 def _carriers_csv(carriers, filename):
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["MC", "Legal Name", "DBA", "State", "Phone", "Power Units",
-                "Cargo", "City", "Address", "Authority", "USDOT"])
+    w.writerow(["MC", "Legal Name", "Phone Number", "Address", "DBA"])
     for c in carriers:
         w.writerow(["MC-%s" % c["mc_number"], c.get("legal_name") or "",
-                    c.get("dba_name") or "", c.get("state") or "",
-                    c.get("phone") or "", c.get("power_units") or "",
-                    ", ".join(c.get("cargo_carried") or []),
-                    c.get("city") or "", c.get("address_line1") or "",
-                    c.get("authority_status") or "",
-                    c.get("usdot_number") or ""])
+                    c.get("phone") or "", _full_address(c),
+                    c.get("dba_name") or ""])
     return Response(buf.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=%s" % filename})
 
@@ -1655,6 +1712,34 @@ def _parse_commodities(args):
                 seen.add(x)
                 out.append(x)
     return out
+
+
+def _parse_pu(value):
+    """Fleet-size bound: non-negative int, or None when empty/invalid
+    (empty means no limit on that side). Accepts strings (form/query)
+    and JSON numbers."""
+    try:
+        n = int(str(value or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 0 else None
+
+
+def _fleet_in_range(power_units, min_pu, max_pu):
+    """Scan-time Fleet Size filter: True when the carrier's power units
+    sit inside [min_pu, max_pu] (a None bound means no limit on that
+    side). A carrier with unknown power units cannot be shown to be in
+    range, so it does not qualify while any bound is set."""
+    if min_pu is None and max_pu is None:
+        return True
+    pu = _parse_pu(power_units)
+    if pu is None:
+        return False
+    if min_pu is not None and pu < min_pu:
+        return False
+    if max_pu is not None and pu > max_pu:
+        return False
+    return True
 
 
 def _carrier_filters(args):
@@ -1723,6 +1808,8 @@ def qualified():
     export_args = _export_args(request.args, f)
     return render_template("qualified.html", user=user, rows=rows, states=states,
                            f=f, commodities=commodity_names(),
+                           commodity_trucks={c: equipment_label(c)
+                                             for c in commodity_names()},
                            title="Qualified Carriers", source="scan",
                            export_url=url_for("qualified", export="csv", **export_args))
 
@@ -1906,6 +1993,8 @@ def motus_qualified():
     export_args = _export_args(request.args, f)
     return render_template("qualified.html", user=user, rows=rows, states=states,
                            f=f, commodities=commodity_names(),
+                           commodity_trucks={c: equipment_label(c)
+                                             for c in commodity_names()},
                            title="Motus Qualified", source="motus",
                            export_url=url_for("motus_qualified", export="csv", **export_args))
 
@@ -1921,6 +2010,8 @@ def register_qualified():
     export_args = _export_args(request.args, f)
     return render_template("qualified.html", user=user, rows=rows, states=states,
                            f=f, commodities=commodity_names(),
+                           commodity_trucks={c: equipment_label(c)
+                                             for c in commodity_names()},
                            title="Register Qualified", source="register",
                            export_url=url_for("register_qualified", export="csv", **export_args))
 
@@ -2185,19 +2276,10 @@ def settings_page():
     message = ""
     password_changed = False
     if request.method == "POST":
-        section = request.form.get("section", "scanner")
+        section = request.form.get("section", "appearance")
         conn = store.connect()
         try:
-            if section == "scanner":
-                conn.execute(
-                    "UPDATE settings SET"
-                    " cargo_general=?, cargo_fresh=?, cargo_reefer=? WHERE user_id=?",
-                    (1 if request.form.get("cargo_general") else 0,
-                     1 if request.form.get("cargo_fresh") else 0,
-                     1 if request.form.get("cargo_reefer") else 0,
-                     user["id"]))
-                message = "Scanner settings saved."
-            elif section == "appearance":
+            if section == "appearance":
                 # Audit fix 10: whitelist the allowed values — anything
                 # else falls back to the default instead of being stored.
                 theme = request.form.get("theme") or "Light"

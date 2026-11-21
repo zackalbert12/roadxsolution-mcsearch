@@ -2,33 +2,19 @@
 {% block title %}Settings{% endblock %}
 {% block content %}
 <div class="hero"><h1>Settings</h1>
-<p>Your account and how the scanner works. Change anything here, then press Save.</p></div>
+<p>Your account, appearance and notifications. Change anything here, then press Save.</p></div>
 {% if message %}<div class="notice">{{ message }}</div>{% endif %}
 
 <div class="card">
   <h2>Account</h2>
   <p class="muted">Who you are — and change your password here.</p>
-  <p><b>Username:</b> {{ user.username }}<br><b>Email:</b> {{ user.email }}<br><b>Plan:</b> {% if user.is_admin %}owner{% else %}{{ user.plan }}{% endif %} — $0</p>
+  <p><b>Username:</b> {{ user.username }}<br><b>Email:</b> {{ user.email }}<br><b>Plan:</b> {% if user.is_admin %}owner{% elif user.plan == 'Demo' %}Demo — $0 for 1 month trial{% elif user.plan == 'Lifetime' %}Lifetime — Ask owner for access to lifetime feature — Phone: {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a>, Email: zackalbert.dispatch@gmail.com{% else %}{{ user.plan }}{% endif %}</p>
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="section" value="password">
     <label>Current password</label><input type="password" name="current_password" placeholder="Your current password" required>
     <label>New password</label><input type="password" name="new_password" placeholder="At least 8 characters" required minlength="8">
     <div style="margin-top:14px"><button class="btn" type="submit">Change Password</button></div>
-  </form>
-</div>
-
-<div class="card">
-  <h2>Scanner</h2>
-  <p class="muted">Which cargo the scanner keeps as Qualified. Untick a type to skip those carriers.</p>
-  <form method="post">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <input type="hidden" name="section" value="scanner">
-    <label>Cargo Types</label>
-    <label class="checkbox"><input type="checkbox" name="cargo_general" {% if settings.cargo_general %}checked{% endif %}> General Freight</label>
-    <label class="checkbox"><input type="checkbox" name="cargo_fresh" {% if settings.cargo_fresh %}checked{% endif %}> Fresh Produce</label>
-    <label class="checkbox"><input type="checkbox" name="cargo_reefer" {% if settings.cargo_reefer %}checked{% endif %}> Refrigerated Food</label>
-    <div style="margin-top:14px"><button class="btn" type="submit">Save Scanner Settings</button></div>
   </form>
 </div>
 

@@ -6,9 +6,9 @@
   <p>Check a whole range of MC numbers at once — we look up each one live on FMCSA SAFER and keep only the good carriers.</p>
   {% if user.plan == 'Demo' %}
     {% if demo_expired %}
-      <p class="alert">Demo trial ended — ask the site admin for Lifetime access.</p>
+      <p class="alert">Demo trial ended — Ask owner for access to lifetime feature. Contact the owner: {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a> · zackalbert.dispatch@gmail.com.</p>
     {% else %}
-      <p class="notice">Demo trial: {{ demo_days_left }} day{{ 's' if demo_days_left != 1 else '' }} left — full access. Ask the site admin for Lifetime access before it ends.</p>
+      <p class="notice">Demo trial: {{ demo_days_left }} day{{ 's' if demo_days_left != 1 else '' }} left — $0 for 1 month trial, full access. Ask owner for access to lifetime feature before it ends. Contact the owner: {% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a> · zackalbert.dispatch@gmail.com.</p>
     {% endif %}
   {% endif %}
   <p class="next">What to do: type a Start MC and an End MC below, then press Start Scanning.</p>
@@ -21,12 +21,17 @@
 
 <div class="card">
   <form id="scan-form" onsubmit="return startScan(event)">
+    <div class="form-row fleet-row" style="margin-bottom:12px">
+      <div class="fleet-box"><label>Fleet size — Min power units</label><input type="number" id="min_pu" name="min_pu" min="0" placeholder="No min"></div>
+      <div class="fleet-box"><label>Fleet size — Max power units</label><input type="number" id="max_pu" name="max_pu" min="0" placeholder="No max"></div>
+      <div class="fleet-hint"><label>&nbsp;</label><span class="muted">Only carriers with this many power units qualify — leave blank for no limit.</span></div>
+    </div>
     <div class="form-row">
       <div><label>Start MC — first number in the range</label><input type="number" id="start_mc" name="start_mc" placeholder="e.g. 1630000"></div>
       <div><label>End MC — last number in the range</label><input type="number" id="end_mc" name="end_mc" placeholder="e.g. 1630100"></div>
       <div><label>Commodity filter — only show carriers that haul this</label>
         <select id="commodity" onchange="applyCommodity(this.value)">
-          <option value="">All commodities</option>
+          <option value="">Select All</option>
           {% for c in commodities %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
         </select>
       </div>
@@ -144,6 +149,10 @@ async function startScan(ev){
   fd.append('csrf_token', csrfToken());
   fd.append('start_mc', s);
   fd.append('end_mc', e);
+  const minPu = document.getElementById('min_pu').value.trim();
+  const maxPu = document.getElementById('max_pu').value.trim();
+  if (minPu) fd.append('min_pu', minPu);
+  if (maxPu) fd.append('max_pu', maxPu);
   // Audit fix 7: check the response before parsing JSON — a 403 page
   // (or a login redirect) is HTML, and r.json() on it used to throw
   // silently so the button just did nothing.

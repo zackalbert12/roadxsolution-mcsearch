@@ -226,6 +226,16 @@ def commodity_names():
     return sorted(COMMODITIES.keys())
 
 
+def equipment_label(name):
+    """Truck types for a commodity, e.g. 'Box Truck, Dry Van'.
+
+    Uses the commodity's equipment list from COMMODITIES, in mapping
+    order; '' when the commodity is unknown or has no equipment.
+    """
+    eq = COMMODITIES.get(name, {}).get("equipment") or []
+    return ", ".join(eq)
+
+
 def carrier_matches_commodity(cargo_carried, commodity):
     """True when a carrier's SAFER cargo list hauls the given commodity."""
     info = COMMODITIES.get(commodity)

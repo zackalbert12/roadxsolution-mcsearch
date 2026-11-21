@@ -1,0 +1,22 @@
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="footer-col footer-brand">
+      <span class="footer-tag">SMART DISPATCH. STRONGER PROFITS.</span>
+      <span class="footer-note">Trusted by Dispatchers Nationwide &middot; Fast. Reliable. Secure.</span>
+    </div>
+    <div class="footer-col footer-contact">
+      <span class="footer-label">Contact the owner</span>
+      <span class="footer-contact-item">{% include "_whatsapp_icon.html" %}<a href="https://wa.me/923394126983" target="_blank" rel="noopener">+92 339 4126983</a></span>
+      <span class="footer-contact-item"><a href="mailto:zackalbert.dispatch@gmail.com">zackalbert.dispatch@gmail.com</a></span>
+    </div>
+    <nav class="footer-col footer-links" aria-label="Footer">
+      <span class="footer-label">Quick links</span>
+      <a href="{{ url_for('carrier_search') }}">Carrier Search</a>
+      <a href="{{ url_for('dashboard') }}">MC Scanner</a>
+      <a href="{{ url_for('qualified') }}">Qualified Carriers</a>
+      <a href="{{ url_for('cargo_guide') }}">Cargo Type Guide</a>
+      <a href="{{ url_for('about') }}">About Us</a>
+    </nav>
+  </div>
+  <div class="footer-copy">&copy; 2026 All Rights Reserved by RoadxSolutions</div>
+</footer>

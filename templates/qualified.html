@@ -41,16 +41,17 @@
       {% for c in commodities %}
       <label class="chip-check {% if c in f.commodities %}on{% endif %}">
         <input type="checkbox" name="commodity" value="{{ c }}" {% if c in f.commodities %}checked{% endif %}>
-        <span>{{ c }}</span>
+        <span>{{ c }}{% if commodity_trucks and commodity_trucks.get(c) %} — {{ commodity_trucks[c] }}{% endif %}</span>
       </label>
       {% endfor %}
     </div>
-    {% if f.commodities %}
-    <p class="selected-line">Selected:
+    <p class="selected-line">
+      <button type="button" class="btn small secondary" onclick="selectAllCommodities()">Select All</button>
+      {% if f.commodities %}Selected:
       {% for c in f.commodities %}<span class="chip">{{ c }}</span>{% endfor %}
       <button type="button" class="btn small secondary" onclick="clearCommodities()">Clear all</button>
+      {% endif %}
     </p>
-    {% endif %}
   </div>
   </form>
 </div>
@@ -96,6 +97,10 @@
 </div>
 
 <script>
+function selectAllCommodities(){
+  document.querySelectorAll('#qualified-filter input[name="commodity"]').forEach(function(cb){ cb.checked = true; });
+  document.getElementById('qualified-filter').submit();
+}
 function clearCommodities(){
   document.querySelectorAll('#qualified-filter input[name="commodity"]').forEach(function(cb){ cb.checked = false; });
   document.getElementById('qualified-filter').submit();

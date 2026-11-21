@@ -63,7 +63,7 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </div>
-  <div class="footer">Trusted by Dispatchers Nationwide &nbsp;·&nbsp; Fast. Reliable. Secure.<br><span class="footer-tag">SMART DISPATCH. STRONGER PROFITS.</span><br>© 2026 All Rights Reserved by RoadxSolutions</div>
+  {% include "_footer.html" %}
 </div>
 {% else %}
   <button class="theme-toggle theme-toggle-fixed" type="button" onclick="toggleTheme()" title="Switch dark / light theme"><span class="theme-toggle-icon">☾</span> <span class="theme-toggle-label">Dark</span></button>
@@ -71,6 +71,7 @@
     {% if messages %}<div class="auth-wrap" style="margin-bottom:0">{% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}</div>{% endif %}
   {% endwith %}
   {% block auth %}{% endblock %}
+  {% include "_footer.html" %}
 {% endif %}
 <script>
 function currentTheme(){

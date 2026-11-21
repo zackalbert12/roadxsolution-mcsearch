@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS scans (
     status TEXT NOT NULL DEFAULT 'running',
     started_at TEXT NOT NULL,
     finished_at TEXT,
-    duration_seconds INTEGER DEFAULT 0
+    duration_seconds INTEGER DEFAULT 0,
+    min_pu INTEGER,
+    max_pu INTEGER
 );
 CREATE TABLE IF NOT EXISTS carriers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -207,6 +209,15 @@ def init_db():
         # a code; an unconfirmed secret never reaches the database.
         if "totp_secret" not in cols:
             conn.execute("ALTER TABLE users ADD COLUMN totp_secret TEXT")
+        # Migration for the scan-time Fleet Size filter: the min/max power
+        # units the user set on the Dashboard scan form, stored on the scan
+        # so a resume reuses the same range. NULL = no limit on that side.
+        scan_cols = [r[1] for r in
+                     conn.execute("PRAGMA table_info(scans)").fetchall()]
+        if "min_pu" not in scan_cols:
+            conn.execute("ALTER TABLE scans ADD COLUMN min_pu INTEGER")
+        if "max_pu" not in scan_cols:
+            conn.execute("ALTER TABLE scans ADD COLUMN max_pu INTEGER")
         conn.commit()
     finally:
         conn.close()
