@@ -837,7 +837,7 @@ def _local_carriers_by_name(q):
 def _name_search(q):
     """Company-name search: live SAFER keyword matches first, saved
     carriers as a fallback when SAFER finds nobody (or is unreachable)."""
-    matches, err = search_by_name(q)
+    matches, err = search_by_name(q, direct_first=True)
     if err:
         app.logger.exception("SAFER name search failed for %r", q)
         rows = _local_carriers_by_name(q)
@@ -855,7 +855,8 @@ def _name_search(q):
         return {"kind": "message",
                 "text": "No carrier named \u201c%s\u201d found on SAFER, and none in our checked carriers either. Check the spelling or search by MC / USDOT." % q}
     if len(matches) == 1:
-        rec = check_usdot(matches[0]["usdot"], ("general", "fresh", "reefer"))
+        rec = check_usdot(matches[0]["usdot"], ("general", "fresh", "reefer"),
+                          direct_first=True)
         res = _detail_result(rec, "USDOT")
         res["matched"] = matches[0]
         return res
@@ -867,9 +868,11 @@ def _run_carrier_search(q, stype):
     """Run a public carrier search. Result kinds: detail | ambiguous |
     name_matches | local_matches | message."""
     if stype == "mc":
-        return _detail_result(check_mc(q, ("general", "fresh", "reefer")), "MC_MX")
+        return _detail_result(check_mc(q, ("general", "fresh", "reefer"),
+                                       direct_first=True), "MC_MX")
     if stype == "usdot":
-        return _detail_result(check_usdot(q, ("general", "fresh", "reefer")), "USDOT")
+        return _detail_result(check_usdot(q, ("general", "fresh", "reefer"),
+                                          direct_first=True), "USDOT")
     if stype == "phone":
         digits = _digits(q)
         if len(digits) == 11 and digits.startswith("1"):
@@ -897,8 +900,10 @@ def _run_carrier_search(q, stype):
         # A record only counts as a real alternative when SAFER returns a
         # usable carrier (an inactive record has no name — it is not a
         # second carrier, just a stale number).
-        dot = check_usdot(stripped, ("general", "fresh", "reefer"))
-        mc = check_mc(stripped, ("general", "fresh", "reefer"))
+        dot = check_usdot(stripped, ("general", "fresh", "reefer"),
+                          direct_first=True)
+        mc = check_mc(stripped, ("general", "fresh", "reefer"),
+                      direct_first=True)
 
         def _usable(rec):
             return bool(rec.get("found")) and not rec.get("fetch_error") \
@@ -1908,7 +1913,8 @@ def retry_error(eid):
                            (eid, user["id"])).fetchone()
         if not row:
             abort(404)
-        rec = check_mc(row["mc_number"], selected_cargo(settings))
+        rec = check_mc(row["mc_number"], selected_cargo(settings),
+                       direct_first=True)
         conn.execute("DELETE FROM error_mcs WHERE id=?", (eid,))
         if rec["qualified"]:
             conn.execute(

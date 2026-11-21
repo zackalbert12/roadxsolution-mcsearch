@@ -6,11 +6,14 @@ Uses the public SAFER query endpoint:
 
 Be polite to SAFER: sequential fetches per worker, a short delay between
 requests, timeouts, and exponential-ish backoff on 429/503/5xx before
-giving up. Checks go through rotating proxies (like the original site)
-so one IP never hammers SAFER: ROAD_PROXIES env wins, otherwise a free
-public list is fetched and cached, and a stale list can never stall a
-scan — the last attempt is always direct.
+giving up. Bulk scans go through rotating proxies (like the original
+site) so one IP never hammers SAFER; single searches go DIRECT FIRST
+(a working direct call takes ~4 s, blind proxy rotation was costing
+~30 s) and only fall back to proxies when direct fails. The proxy
+pool itself is health-checked once per cache TTL — dead/slow free
+proxies never reach the rotation.
 """
+import concurrent.futures
 import os
 import re
 import threading
@@ -92,41 +95,120 @@ PROXY_CACHE_TTL = 600  # seconds
 _PROXY_POOL = {"list": [], "fetched_at": 0.0, "idx": 0,
                "lock": threading.Lock()}
 
+# --- proxy health-check ---------------------------------------------------
+# The free ProxyScrape list is mostly dead/slow proxies: trying them
+# blind burns up to the 10 s hard deadline each, which is what made a
+# single live search take ~30 s. So a freshly fetched list is probed
+# once (in parallel, hard-budgeted) and only proxies that answer fast
+# are kept, fastest first. Env-provided proxies (ROAD_PROXIES) go
+# through the same check — a dead paid proxy must not stall a search
+# either. Validation runs at most once per PROXY_CACHE_TTL, and a
+# direct-first search never pays for it on the happy path (the pool is
+# only loaded after direct fails).
+PROXY_PROBE_URL = "https://example.com"  # tiny, reliable HTTPS endpoint
+PROXY_PROBE_TIMEOUT = (2, 3)   # (connect, read) per probe
+PROXY_PROBE_DEADLINE = 3       # hard seconds per probe
+PROXY_PROBE_WORKERS = 10
+PROXY_VALIDATE_MAX = 30        # max proxies probed per refresh
+PROXY_GOOD_TARGET = 10         # stop once this many good proxies found
+PROXY_VALIDATION_BUDGET = 10   # hard seconds for the whole validation
+
+
+def _probe_proxy(proxy):
+    """One probe: GET a tiny HTTPS page through `proxy`. Returns
+    (proxy, latency_seconds) when the proxy answers, else None.
+    Any HTTP response counts — even a 4xx proves the proxy works."""
+    t0 = time.monotonic()
+
+    def _get():
+        return requests.get(PROXY_PROBE_URL, headers=HEADERS,
+                            timeout=PROXY_PROBE_TIMEOUT,
+                            proxies={"http": proxy, "https": proxy})
+
+    resp, _err, timed_out = _request_with_deadline(_get,
+                                                   deadline=PROXY_PROBE_DEADLINE)
+    if timed_out or resp is None:
+        return None
+    return proxy, time.monotonic() - t0
+
+
+def _validate_proxies(proxies):
+    """Probe a raw proxy list in parallel; keep only proxies that
+    answer within the probe deadline, fastest first. Bounded by
+    PROXY_VALIDATION_BUDGET in total: stops early once enough good
+    proxies are found, and never waits for stragglers. Returns []
+    when none answer (callers then fetch direct)."""
+    candidates = list(dict.fromkeys(proxies))  # de-dupe, keep order
+    random.shuffle(candidates)
+    candidates = candidates[:PROXY_VALIDATE_MAX]
+    if not candidates:
+        return []
+    good = []
+    started = time.time()
+    ex = concurrent.futures.ThreadPoolExecutor(
+        max_workers=PROXY_PROBE_WORKERS)
+    try:
+        futs = {ex.submit(_probe_proxy, p): p for p in candidates}
+        try:
+            for fut in concurrent.futures.as_completed(
+                    futs, timeout=PROXY_VALIDATION_BUDGET):
+                res = fut.result()
+                if res is not None:
+                    good.append(res)
+                if len(good) >= PROXY_GOOD_TARGET:
+                    break
+                if time.time() - started >= PROXY_VALIDATION_BUDGET:
+                    break
+        except TimeoutError:
+            pass
+    finally:
+        # Do not wait for stragglers: each probe is already hard-bounded
+        # at PROXY_PROBE_DEADLINE, so running ones finish within ~3 s.
+        ex.shutdown(wait=False, cancel_futures=True)
+    good.sort(key=lambda item: item[1])
+    return [p for p, _lat in good]
+
 
 def _load_proxies():
     """Proxy list: ROAD_PROXIES env (comma-separated http://host:port)
-    wins; otherwise fetch a free public list (cached 10 min).
+    wins; otherwise fetch a free public list. The fresh list is
+    health-checked once per PROXY_CACHE_TTL (see _validate_proxies)
+    and cached — callers only ever see proxies that answered fast.
     Returns [] when proxies are disabled (ROAD_NO_PROXY=1) or none
-    could be loaded — callers then fetch direct."""
+    could be loaded/validated — callers then fetch direct."""
     if os.environ.get("ROAD_NO_PROXY") == "1":
         return []
-    env = os.environ.get("ROAD_PROXIES", "").strip()
-    if env:
-        return [p.strip() for p in env.split(",") if p.strip()]
     now = time.time()
     with _PROXY_POOL["lock"]:
         if _PROXY_POOL["list"] and now - _PROXY_POOL["fetched_at"] < PROXY_CACHE_TTL:
             return list(_PROXY_POOL["list"])
-    try:
-        # Hard deadline: the proxy-list fetch is also an outbound call
-        # and must never stall the request that triggered it.
-        resp, _err, _timed_out = _request_with_deadline(
-            lambda: requests.get(PROXY_LIST_URL, timeout=(5, 10),
-                                 headers=HEADERS),
-            deadline=PROXY_LIST_DEADLINE)
-        if resp is None or resp.status_code != 200:
-            return []
-        proxies = []
-        for line in resp.text.splitlines():
-            line = line.strip()
-            if re.match(r"^\d+\.\d+\.\d+\.\d+:\d+$", line):
-                proxies.append("http://" + line)
-        with _PROXY_POOL["lock"]:
-            _PROXY_POOL["list"] = proxies
-            _PROXY_POOL["fetched_at"] = now
-        return proxies
-    except Exception:
-        return []
+    raw = []
+    env = os.environ.get("ROAD_PROXIES", "").strip()
+    if env:
+        raw = [p.strip() for p in env.split(",") if p.strip()]
+    else:
+        try:
+            # Hard deadline: the proxy-list fetch is also an outbound call
+            # and must never stall the request that triggered it.
+            resp, _err, _timed_out = _request_with_deadline(
+                lambda: requests.get(PROXY_LIST_URL, timeout=(5, 10),
+                                     headers=HEADERS),
+                deadline=PROXY_LIST_DEADLINE)
+            if resp is not None and resp.status_code == 200:
+                for line in resp.text.splitlines():
+                    line = line.strip()
+                    if re.match(r"^\d+\.\d+\.\d+\.\d+:\d+$", line):
+                        raw.append("http://" + line)
+        except Exception:
+            raw = []
+    # Health-check the fresh list (bounded, ~10 s max): dead/slow
+    # proxies never reach the rotation. An empty result just means
+    # "fetch direct" — callers already handle that.
+    good = _validate_proxies(raw) if raw else []
+    with _PROXY_POOL["lock"]:
+        _PROXY_POOL["list"] = good
+        _PROXY_POOL["fetched_at"] = now
+    return list(good)
 
 
 def _next_proxy(proxies):
@@ -291,7 +373,8 @@ def parse_snapshot(html, mc_number):
     return rec
 
 
-def fetch_snapshot(identifier, param="MC_MX", delay=DELAY):
+def fetch_snapshot(identifier, param="MC_MX", delay=DELAY,
+                   direct_first=False):
     """Fetch one SAFER snapshot. Returns (record_dict, error_or_None).
 
     record_dict has the parse_snapshot shape plus:
@@ -299,6 +382,14 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY):
       status (one of Qualified / Not Found / Skip — ... / Error),
       note (str).
     Classification happens in classify(); this function only fetches.
+
+    direct_first=True (single searches): try the direct connection
+    first — a working direct call takes ~4 s, while blind proxy
+    rotation was costing ~30 s — and only fall back to the
+    health-checked proxy pool when direct fails. The pool is loaded
+    lazily, after direct fails, so the happy path never pays the
+    validation cost. direct_first=False (bulk scans): the old order —
+    proxies first, direct last — so one IP never hammers SAFER.
     """
     params = {
         "searchtype": "ANY",
@@ -306,18 +397,37 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY):
         "query_param": param,
         "query_string": str(identifier),
     }
-    # Attempt plan: rotate through proxies first (like the original site),
-    # then one final direct attempt so a stale free-proxy list can never
-    # stall the check entirely.
-    proxies = _load_proxies()
-    attempts = []
+    # Attempt plan: direct-first for single searches, proxy rotation
+    # for bulk scans (see docstring). In direct-first mode the proxy
+    # list stays unloaded until direct actually fails.
+    proxies = None if direct_first else _load_proxies()
+    attempts = [None] if direct_first else []
     seen = set()
-    for _ in range(MAX_RETRIES):
-        p = _next_proxy(proxies)
-        if p and p not in seen:
-            attempts.append(p)
-            seen.add(p)
-    attempts.append(None)  # direct
+    if not direct_first:
+        for _ in range(MAX_RETRIES):
+            p = _next_proxy(proxies)
+            if p and p not in seen:
+                attempts.append(p)
+                seen.add(p)
+        attempts.append(None)  # direct
+    proxies_loaded = not direct_first
+
+    def _maybe_load_proxies():
+        """Direct-first only: on the first failed direct attempt, load
+        the health-checked proxy pool and append fresh proxies to the
+        attempt list. No-op in proxy-first mode (pool already loaded)
+        and on later calls (pool already appended)."""
+        nonlocal proxies_loaded
+        if not direct_first or proxies_loaded:
+            return
+        proxies_loaded = True
+        pool = _load_proxies()
+        for _ in range(MAX_RETRIES):
+            p = _next_proxy(pool)
+            if p and p not in seen:
+                attempts.append(p)
+                seen.add(p)
+
     last_err = None
     started = time.time()
     attempt = 0
@@ -338,20 +448,23 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY):
             deadline=min(SAFER_ATTEMPT_DEADLINE, remaining))
         if timed_out:
             # The connect/TLS handshake stalled past the hard deadline.
-            # A hung proxy is never going to answer: skip any remaining
-            # proxies and go straight to the direct attempt.
             last_err = "Fetch timed out (connection stalled)"
-            if proxy is not None:
+            if proxy is not None and not direct_first:
+                # A hung proxy is never going to answer: skip any
+                # remaining proxies and go straight to the direct attempt.
                 attempts = attempts[:attempt] + [None]
-            continue
-        if err is not None:
+            # In direct-first mode a stalled attempt just falls through
+            # to the next one (proxy fallback, or the error below).
+        elif err is not None:
             last_err = "Fetch error: %s" % err
             # Dead proxy / network error: rotate immediately, no sleep —
             # the next proxy is a different IP, so waiting helps nothing.
-            continue
-        if resp.status_code in (429, 503) or resp.status_code >= 500:
-            # SAFER itself is rate-limiting: wait, then retry.
+        elif resp.status_code in (429, 503) or resp.status_code >= 500:
+            # SAFER itself is rate-limiting: wait, then retry. Load the
+            # proxy pool first when direct just got throttled, so the
+            # retry can go through a different IP.
             last_err = "HTTP %s from SAFER" % resp.status_code
+            _maybe_load_proxies()
             if attempt < len(attempts):
                 wait = BACKOFF[min(attempt - 1, len(BACKOFF) - 1)]
                 remaining = SAFER_TOTAL_BUDGET - (time.time() - started)
@@ -360,17 +473,21 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY):
                 time.sleep(min(wait, remaining))
                 continue
             return _error_record(identifier, last_err), last_err
-        try:
-            resp.raise_for_status()
-        except requests.RequestException as exc:
-            last_err = "Fetch error: %s" % exc
-            continue
-        rec = parse_snapshot(resp.text, identifier)
-        rec["fetch_error"] = False
-        rec["error"] = ""
-        if delay:
-            time.sleep(delay + random.uniform(0, 0.4))
-        return rec, None
+        else:
+            try:
+                resp.raise_for_status()
+            except requests.RequestException as exc:
+                last_err = "Fetch error: %s" % exc
+            else:
+                rec = parse_snapshot(resp.text, identifier)
+                rec["fetch_error"] = False
+                rec["error"] = ""
+                if delay:
+                    time.sleep(delay + random.uniform(0, 0.4))
+                return rec, None
+        # Direct failed in direct-first mode: load the (health-checked)
+        # proxy pool now and append fresh proxies to the attempt list.
+        _maybe_load_proxies()
     return _error_record(identifier, last_err or "Fetch error"), last_err
 
 
@@ -473,9 +590,12 @@ def fetch_company_officer(dot_number):
     return name
 
 
-def check_mc(mc_number, selected_cargo=("general", "fresh", "reefer"), delay=DELAY):
-    """Fetch + classify one MC. Returns the record dict with status/note/qualified."""
-    rec, _err = fetch_snapshot(mc_number, param="MC_MX", delay=delay)
+def check_mc(mc_number, selected_cargo=("general", "fresh", "reefer"), delay=DELAY,
+             direct_first=False):
+    """Fetch + classify one MC. Returns the record dict with status/note/qualified.
+    direct_first=True: direct connection first (single searches)."""
+    rec, _err = fetch_snapshot(mc_number, param="MC_MX", delay=delay,
+                               direct_first=direct_first)
     status, note, qualified = classify(rec, selected_cargo)
     rec["status"] = status
     rec["note"] = note
@@ -483,9 +603,12 @@ def check_mc(mc_number, selected_cargo=("general", "fresh", "reefer"), delay=DEL
     return rec
 
 
-def check_usdot(usdot, selected_cargo=("general", "fresh", "reefer"), delay=DELAY):
-    """Fetch + classify one USDOT (Motus-style input)."""
-    rec, _err = fetch_snapshot(usdot, param="USDOT", delay=delay)
+def check_usdot(usdot, selected_cargo=("general", "fresh", "reefer"), delay=DELAY,
+                direct_first=False):
+    """Fetch + classify one USDOT (Motus-style input).
+    direct_first=True: direct connection first (single searches)."""
+    rec, _err = fetch_snapshot(usdot, param="USDOT", delay=delay,
+                               direct_first=direct_first)
     status, note, qualified = classify(rec, selected_cargo)
     rec["status"] = status
     rec["note"] = note
@@ -529,7 +652,7 @@ def parse_name_matches(html, limit=50):
     return matches
 
 
-def search_by_name(name, limit=50):
+def search_by_name(name, limit=50, direct_first=False):
     """Search SAFER by company name (keyword search).
 
     SAFER redirects NAME searches to keywordx.asp, which lists
@@ -540,6 +663,10 @@ def search_by_name(name, limit=50):
 
     Returns (matches, error_or_None). An empty match list with no
     error means SAFER found nobody under that name.
+
+    direct_first=True (single searches): direct first, proxy pool
+    only on direct failure — same as fetch_snapshot. False (bulk):
+    proxies first, direct last.
     """
     params = {
         "searchtype": "ANY",
@@ -547,15 +674,32 @@ def search_by_name(name, limit=50):
         "query_param": "NAME",
         "query_string": name,
     }
-    proxies = _load_proxies()
-    attempts = []
+    proxies = None if direct_first else _load_proxies()
+    attempts = [None] if direct_first else []
     seen = set()
-    for _ in range(MAX_RETRIES):
-        p = _next_proxy(proxies)
-        if p and p not in seen:
-            attempts.append(p)
-            seen.add(p)
-    attempts.append(None)  # final direct attempt
+    if not direct_first:
+        for _ in range(MAX_RETRIES):
+            p = _next_proxy(proxies)
+            if p and p not in seen:
+                attempts.append(p)
+                seen.add(p)
+        attempts.append(None)  # final direct attempt
+    proxies_loaded = not direct_first
+
+    def _maybe_load_proxies():
+        """Direct-first only: on the first failed direct attempt, load
+        the health-checked proxy pool and append fresh proxies."""
+        nonlocal proxies_loaded
+        if not direct_first or proxies_loaded:
+            return
+        proxies_loaded = True
+        pool = _load_proxies()
+        for _ in range(MAX_RETRIES):
+            p = _next_proxy(pool)
+            if p and p not in seen:
+                attempts.append(p)
+                seen.add(p)
+
     last_err = None
     started = time.time()
     attempt = 0
@@ -576,14 +720,13 @@ def search_by_name(name, limit=50):
             deadline=min(SAFER_ATTEMPT_DEADLINE, remaining))
         if timed_out:
             last_err = "Fetch timed out (connection stalled)"
-            if proxy is not None:
+            if proxy is not None and not direct_first:
                 attempts = attempts[:attempt] + [None]
-            continue
-        if err is not None:
+        elif err is not None:
             last_err = "Fetch error: %s" % err
-            continue
-        if resp.status_code in (429, 503) or resp.status_code >= 500:
+        elif resp.status_code in (429, 503) or resp.status_code >= 500:
             last_err = "HTTP %s from SAFER" % resp.status_code
+            _maybe_load_proxies()
             if attempt < len(attempts):
                 wait = BACKOFF[min(attempt - 1, len(BACKOFF) - 1)]
                 remaining = SAFER_TOTAL_BUDGET - (time.time() - started)
@@ -592,10 +735,12 @@ def search_by_name(name, limit=50):
                 time.sleep(min(wait, remaining))
                 continue
             return [], last_err
-        try:
-            resp.raise_for_status()
-        except requests.RequestException as exc:
-            last_err = "Fetch error: %s" % exc
-            continue
-        return parse_name_matches(resp.text, limit), None
+        else:
+            try:
+                resp.raise_for_status()
+            except requests.RequestException as exc:
+                last_err = "Fetch error: %s" % exc
+            else:
+                return parse_name_matches(resp.text, limit), None
+        _maybe_load_proxies()
     return [], last_err or "Fetch error"
