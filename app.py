@@ -2258,8 +2258,13 @@ def forgot():
         try:
             user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
             if user:
+                # Only the newest code works: invalidate any prior
+                # unused reset codes for this user first (same pattern
+                # as the OTP / signup-code flows).
+                conn.execute("UPDATE password_resets SET used=1"
+                             " WHERE user_id=? AND used=0", (user["id"],))
                 code = "%06d" % secrets.randbelow(1000000)
-                expires = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+                expires = (datetime.now() + timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
                 conn.execute(
                     "INSERT INTO password_resets (user_id, code, created_at, expires_at)"
                     " VALUES (?,?,?,?)", (user["id"], code, now_str(), expires))
@@ -2269,7 +2274,7 @@ def forgot():
             message = ("If an account exists for that email, a reset was requested. "
                        "Ask the site admin for your one-time code "
                        "(Admin → Password Reset Requests), then use it on the "
-                       "Reset Password page. The code expires in 1 hour.")
+                       "Reset Password page. The code expires in 15 minutes.")
         finally:
             conn.close()
     return render_template("forgot.html", message=message, error=error)
