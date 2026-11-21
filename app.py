@@ -802,9 +802,14 @@ def carrier_search():
     if mode not in ("auto", "single", "bulk"):
         mode = "auto"
     q = (request.values.get("q") or "").strip()
-    stype = (request.values.get("type") or "auto").strip().lower()
-    if mode == "auto":
-        stype = "auto"
+    # An explicit type (from the disambiguation "View record" links or the
+    # Single Search form) always wins — even when mode is absent and
+    # defaults to "auto". Only fall back to auto-detect when no type was
+    # given at all. (Previously `mode == "auto"` forced stype back to
+    # "auto", so the disambiguation links and Single Search with a chosen
+    # type both re-ran auto-detect and showed the disambiguation again.)
+    type_param = request.values.get("type")
+    stype = (type_param or "auto").strip().lower()
     if stype not in ("auto", "mc", "usdot", "phone", "email", "name"):
         stype = "auto"
     bulk = (request.values.get("bulk") or "").strip()

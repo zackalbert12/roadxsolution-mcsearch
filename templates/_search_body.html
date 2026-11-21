@@ -42,6 +42,7 @@
 {% else %}
 <div class="card">
   <form method="get" action="{{ url_for('carrier_search') }}" class="form-row">
+    <input type="hidden" name="mode" value="single">
     <div style="flex:1;min-width:220px"><label>MC, USDOT, phone, email or company name</label>
       <input type="text" name="q" value="{{ q }}" placeholder="e.g. 1630009, 4218222, HOUSER'S HAULING LLC" required></div>
     <div><label>Search by</label>
