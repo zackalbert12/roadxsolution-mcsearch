@@ -262,6 +262,24 @@ def _handle_403(err):
     if request.path.startswith("/api/"):
         return jsonify({"ok": False,
                         "error": "Session expired — reload the page and try again."}), 403
+    # Delete-account double-submit: the first submit already deleted the
+    # account and cleared the session (which also wipes the CSRF token),
+    # so a retry of the same form no longer matches any token and lands
+    # here. The account is gone, not "unchanged" — send the user to the
+    # login page with the honest outcome instead of the scary
+    # "Session expired / nothing was changed" page. CSRF still blocked
+    # the request; only the landing page changes, and only for a browser
+    # that just deleted an account (the delete route marks the fresh
+    # session with account_deleted). A still-logged-in user with a stale
+    # token keeps the normal 403 page below, so a genuinely stale token
+    # stays visible, and a random logged-out POST gets the normal 403.
+    if (request.method == "POST"
+            and request.path == "/settings/delete-account"
+            and session.get("account_deleted")):
+        queued = [m for _c, m in session.get("_flashes", [])]
+        if "Your account has been deleted." not in queued:
+            flash("Your account has been deleted.")
+        return redirect(url_for("login"))
     if request.path.startswith("/admin") and current_user():
         title = "Admin only"
         message = "Only the site admin can open this page."
@@ -2089,6 +2107,13 @@ def delete_account():
     finally:
         conn.close()
     session.clear()
+    # Mark the fresh session: a retry of the same delete form (its CSRF
+    # token died with the old session) is recognised in the 403 handler
+    # as "already deleted" instead of a scary session-expired error.
+    # _login_user clears the session on the next login, so this flag
+    # never survives into a new account session.
+    session["account_deleted"] = True
+    flash("Your account has been deleted.")
     return redirect(url_for("login"))
 
 

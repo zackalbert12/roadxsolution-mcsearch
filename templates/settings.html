@@ -81,7 +81,7 @@
   <h2>Danger Zone</h2>
   <p class="muted">Be careful — Export downloads all your data, Delete removes your account and everything in it. This cannot be undone.</p>
   <p><a class="btn secondary" href="{{ url_for('export_data') }}">Export My Data</a></p>
-  <form method="post" action="{{ url_for('delete_account') }}" onsubmit="return confirm('Delete your account and all its data? This cannot be undone.')">
+  <form method="post" action="{{ url_for('delete_account') }}" onsubmit="if(!confirm('Delete your account and all its data? This cannot be undone.')) return false; var b=this.querySelector('button[type=submit]'); b.disabled=true; b.textContent='Deleting…'; return true;">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button class="btn danger" type="submit">Delete My Account</button>
   </form>

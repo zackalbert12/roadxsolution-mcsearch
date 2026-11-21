@@ -58,6 +58,9 @@
   <div class="footer">Trusted by Dispatchers Nationwide &nbsp;·&nbsp; Fast. Reliable. Secure.<br>© 2026 All Rights Reserved by RoadxSolution-mcsearch</div>
 </div>
 {% else %}
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}<div class="auth-wrap" style="margin-bottom:0">{% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}</div>{% endif %}
+  {% endwith %}
   {% block auth %}{% endblock %}
 {% endif %}
 <script>
