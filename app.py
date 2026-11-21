@@ -1274,8 +1274,8 @@ def _digits(s):
 
 
 def _like_escape(s):
-    """Escape LIKE wildcards so a search for %, _ or \ matches those
-    literal characters instead of acting as a wildcard."""
+    """Escape LIKE wildcards so a search for %, _ or backslash matches
+    those literal characters instead of acting as a wildcard."""
     return (s or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
