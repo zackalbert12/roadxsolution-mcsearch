@@ -1097,13 +1097,17 @@ def carrier_search():
     carriers for phone/email reverse lookup. Bulk mode checks a pasted
     list of MC/DOT numbers (up to 50) in one go."""
     user = current_user()
-    mode = (request.values.get("mode") or "auto").strip().lower()
-    if mode not in ("auto", "single", "bulk"):
-        mode = "auto"
+    # Single Search is the only single-search mode (its type dropdown
+    # defaults to Auto-detect, so a separate Auto mode is redundant).
+    # An old ?mode=auto link/bookmark is normalized to single, never an
+    # error — the single form with Auto-detect behaves the same way.
+    mode = (request.values.get("mode") or "single").strip().lower()
+    if mode not in ("single", "bulk"):
+        mode = "single"
     q = (request.values.get("q") or "").strip()
     # An explicit type (from the disambiguation "View record" links or the
     # Single Search form) always wins — even when mode is absent and
-    # defaults to "auto". Only fall back to auto-detect when no type was
+    # defaults to "single". Only fall back to auto-detect when no type was
     # given at all. (Previously `mode == "auto"` forced stype back to
     # "auto", so the disambiguation links and Single Search with a chosen
     # type both re-ran auto-detect and showed the disambiguation again.)
