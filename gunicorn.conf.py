@@ -25,5 +25,10 @@
 # ~40 s. 120 s also covers a large parallel bulk search in the
 # pathological all-hang case; a genuinely wedged worker still gets
 # killed and replaced instead of stalling the service forever.
+# threads=8 instead: the single worker still serves concurrent requests
+# (the dev server is already threaded) while RUNNING_SCANS stays in one
+# process. Scan threads themselves run in a ThreadPoolExecutor, so the
+# request threads are never blocked by a scan.
 workers = 1
+threads = 8
 timeout = 120
