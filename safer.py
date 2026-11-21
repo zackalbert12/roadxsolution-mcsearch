@@ -507,7 +507,8 @@ def classify(rec, selected_cargo=("general", "fresh", "reefer")):
 
     Returns (status, note, qualified_bool). Statuses:
       Qualified | Not Found | Skip — Not authorized |
-      Skip — Record inactive | Skip — Cargo mismatch | Error
+      Skip — Record inactive | Skip — Cargo mismatch |
+      Not a carrier | Error
     Rule (transparent, unlike the original's undisclosed extra check):
       authorised for-hire carrier whose cargo matches a selected type.
     """
@@ -523,7 +524,7 @@ def classify(rec, selected_cargo=("general", "fresh", "reefer")):
                 rec.get("authority_status") or "Not authorized", False)
     entity = (rec.get("entity_type") or "").upper()
     if "CARRIER" not in entity:
-        return ("Skip — Cargo mismatch",
+        return ("Not a carrier",
                 "Entity is %s, not a carrier" % (rec.get("entity_type") or "—"), False)
     cats = rec.get("cargo_categories") or []
     if not cats:
