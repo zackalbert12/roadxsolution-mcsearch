@@ -77,7 +77,7 @@
         </td>
         <td>
           {% if not u.is_admin %}
-          <button class="btn small" type="button" onclick="openAccessModal({{ u.id }}, {{ u.username|tojson }}, {{ u.plan|tojson }}, {{ u.access_ends|tojson }})">Access</button>
+          <button class="btn small access-btn" type="button" data-user-id="{{ u.id }}" data-username="{{ u.username }}" data-plan="{{ u.plan }}" data-access-ends="{{ u.access_ends }}">Access</button>
           {% else %}—{% endif %}
         </td>
         <td>
@@ -175,6 +175,14 @@
   </div>
 </div>
 <script>
+// Access buttons pass their values via data-* attributes (Jinja autoescape
+// makes them safe in attributes) instead of an inline onclick handler,
+// whose double-quoted JSON strings truncated the attribute and broke the popup.
+document.querySelectorAll('.access-btn').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    openAccessModal(btn.dataset.userId, btn.dataset.username, btn.dataset.plan, btn.dataset.accessEnds);
+  });
+});
 function openAccessModal(uid, username, plan, ends) {
   document.getElementById('access-user-id').value = uid;
   document.getElementById('access-username').textContent = username;

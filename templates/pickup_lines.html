@@ -22,7 +22,7 @@
   {% for c, t in lines %}
     <div style="display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #f3f4f6;padding:10px 0">
       <div><span class="pill orange">{{ c }}</span> <span class="line-card" style="font-size:14px">{{ t }}</span></div>
-      <button class="btn secondary small" onclick="navigator.clipboard.writeText({{ t|tojson }});this.textContent='Copied!';">Copy</button>
+      <button class="btn secondary small copy-line-btn" type="button" data-line="{{ t }}">Copy</button>
     </div>
   {% else %}
     <div class="empty-state">
@@ -31,4 +31,16 @@
     </div>
   {% endfor %}
 </div>
+<script>
+// Copy buttons pass the line via a data-* attribute (Jinja autoescape makes
+// it safe in attributes) instead of an inline onclick handler, whose
+// double-quoted JSON strings truncated the attribute and broke the button.
+document.querySelectorAll('.copy-line-btn').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    navigator.clipboard.writeText(btn.dataset.line).then(function () {
+      btn.textContent = 'Copied!';
+    });
+  });
+});
+</script>
 {% endblock %}
