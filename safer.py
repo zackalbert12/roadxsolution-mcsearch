@@ -15,6 +15,7 @@ proxies never reach the rotation. There is no free proxy list:
 ROAD_PROXIES pins proxies explicitly, otherwise fetches go direct.
 """
 import concurrent.futures
+import copy
 import os
 import re
 import threading
@@ -203,6 +204,58 @@ def _next_proxy(proxies):
         _PROXY_POOL["idx"] += 1
     return proxy
 
+# --- SAFER snapshot cache (single / bulk searches only) -------------------
+# A repeat search for the same MC/USDOT hits this in-memory cache instead
+# of SAFER: a cached repeat answers in ~10 ms instead of ~2-3 s.
+# 15-minute TTL, keyed by (param, identifier), max 1,000 entries with
+# oldest-first eviction (dict insertion order; a hit moves its key to
+# the end, so the cache is roughly LRU). ONLY successful, found records
+# are cached — errors and "not found" answers are never cached (a
+# not-found MC may be registered later; an error may clear on retry).
+# SCANS NEVER USE THE CACHE: run_scan / run_motus must always fetch
+# live SAFER data, so app.py passes use_cache=False explicitly
+# (_safe_check_mc / _safe_check_usdot) — a scan that reused cached
+# data would silently miss carriers whose authority changed.
+SNAPSHOT_CACHE_TTL = 900   # seconds (15 minutes)
+SNAPSHOT_CACHE_MAX = 1000
+_SNAPSHOT_CACHE = {}       # (param, identifier) -> (fetched_at, record)
+_SNAPSHOT_CACHE_LOCK = threading.Lock()
+
+
+def _snapshot_cache_get(key):
+    """Cached record for `key`, or None (miss / stale entry dropped).
+    Returns a deep copy — callers mutate records (status, notes), and
+    the cached copy must stay pristine."""
+    with _SNAPSHOT_CACHE_LOCK:
+        entry = _SNAPSHOT_CACHE.get(key)
+        if entry is None:
+            return None
+        fetched_at, rec = entry
+        if time.monotonic() - fetched_at > SNAPSHOT_CACHE_TTL:
+            del _SNAPSHOT_CACHE[key]
+            return None
+        # Hit: move to the end so eviction drops the least-recently-used.
+        _SNAPSHOT_CACHE[key] = _SNAPSHOT_CACHE.pop(key)
+        return copy.deepcopy(rec)
+
+
+def _snapshot_cache_put(key, rec):
+    """Store a successful, found record (deep copy — the caller's rec
+    is mutated after this returns). Evicts the oldest entry when full."""
+    with _SNAPSHOT_CACHE_LOCK:
+        if key in _SNAPSHOT_CACHE:
+            del _SNAPSHOT_CACHE[key]
+        elif len(_SNAPSHOT_CACHE) >= SNAPSHOT_CACHE_MAX:
+            _SNAPSHOT_CACHE.pop(next(iter(_SNAPSHOT_CACHE)))
+        _SNAPSHOT_CACHE[key] = (time.monotonic(), copy.deepcopy(rec))
+
+
+def clear_snapshot_cache():
+    """Empty the snapshot cache (tests; also handy after a SAFER outage
+    if stale data is ever suspected — a restart clears it too)."""
+    with _SNAPSHOT_CACHE_LOCK:
+        _SNAPSHOT_CACHE.clear()
+
 # SAFER cargo names that map to the "fresh" and "reefer" categories.
 FRESH_CARGO = {"Fresh Produce"}
 REEFER_CARGO = {"Refrigerated Food", "Meat", "Dairy"}
@@ -357,7 +410,7 @@ def parse_snapshot(html, mc_number):
 
 
 def fetch_snapshot(identifier, param="MC_MX", delay=DELAY,
-                   direct_first=False):
+                   direct_first=False, use_cache=True):
     """Fetch one SAFER snapshot. Returns (record_dict, error_or_None).
 
     record_dict has the parse_snapshot shape plus:
@@ -365,6 +418,11 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY,
       status (one of Qualified / Not Found / Skip — ... / Error),
       note (str).
     Classification happens in classify(); this function only fetches.
+
+    use_cache=True (single / bulk searches): a successful, found
+    record is served from the 15-minute in-memory cache on repeat
+    lookups. use_cache=False (scans): always fetch live — see the
+    cache comment above.
 
     direct_first=True (single searches): try the direct connection
     first — a working direct call takes ~4 s, while blind proxy
@@ -374,6 +432,11 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY,
     validation cost. direct_first=False (bulk scans): the old order —
     proxies first, direct last — so one IP never hammers SAFER.
     """
+    cache_key = (param, str(identifier))
+    if use_cache:
+        cached = _snapshot_cache_get(cache_key)
+        if cached is not None:
+            return cached, None
     params = {
         "searchtype": "ANY",
         "query_type": "queryCarrierSnapshot",
@@ -465,6 +528,10 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY,
                 rec = parse_snapshot(resp.text, identifier)
                 rec["fetch_error"] = False
                 rec["error"] = ""
+                if use_cache and rec.get("found"):
+                    # Cache only successful, found records — never
+                    # errors or "not found" (see the cache comment).
+                    _snapshot_cache_put(cache_key, rec)
                 if delay:
                     time.sleep(delay + random.uniform(0, 0.4))
                 return rec, None
@@ -575,11 +642,12 @@ def fetch_company_officer(dot_number):
 
 
 def check_mc(mc_number, selected_cargo=("general", "fresh", "reefer"), delay=DELAY,
-             direct_first=False):
+             direct_first=False, use_cache=True):
     """Fetch + classify one MC. Returns the record dict with status/note/qualified.
-    direct_first=True: direct connection first (single searches)."""
+    direct_first=True: direct connection first (single searches).
+    use_cache=False: always fetch live (scans — never cached)."""
     rec, _err = fetch_snapshot(mc_number, param="MC_MX", delay=delay,
-                               direct_first=direct_first)
+                               direct_first=direct_first, use_cache=use_cache)
     status, note, qualified = classify(rec, selected_cargo)
     rec["status"] = status
     rec["note"] = note
@@ -588,11 +656,12 @@ def check_mc(mc_number, selected_cargo=("general", "fresh", "reefer"), delay=DEL
 
 
 def check_usdot(usdot, selected_cargo=("general", "fresh", "reefer"), delay=DELAY,
-                direct_first=False):
+                direct_first=False, use_cache=True):
     """Fetch + classify one USDOT (Motus-style input).
-    direct_first=True: direct connection first (single searches)."""
+    direct_first=True: direct connection first (single searches).
+    use_cache=False: always fetch live (scans — never cached)."""
     rec, _err = fetch_snapshot(usdot, param="USDOT", delay=delay,
-                               direct_first=direct_first)
+                               direct_first=direct_first, use_cache=use_cache)
     status, note, qualified = classify(rec, selected_cargo)
     rec["status"] = status
     rec["note"] = note

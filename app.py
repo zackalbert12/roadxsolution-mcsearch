@@ -1019,6 +1019,131 @@ except (TypeError, ValueError):
     SCAN_WORKERS = 10
 _DB_WRITE_LOCK = threading.Lock()  # serialise SQLite writes from workers
 
+# --- global scan concurrency cap -----------------------------------------
+# One user (or several users together) must not be able to exhaust the
+# free tier or get SAFER to rate-limit the server IP: at most
+# ROAD_MAX_CONCURRENT_SCANS scans + Motus runs may be running at once
+# across ALL users (default 3). The cap is a per-process semaphore —
+# gunicorn runs a single worker (gunicorn.conf.py: workers=1), so one
+# process is the whole server. A start/resume/Motus launch acquires a
+# slot non-blocking; the background thread releases it in its finally
+# block when the run ends. When the cap is hit the launch is REFUSED
+# with SCAN_BUSY_MESSAGE ("Server is busy — try again in a bit") and
+# HTTP 503 / a flash message — never a hang, never a 500. The
+# per-user one-scan rule and the Demo 10,000-MC cap are untouched and
+# are still checked first; this cap only limits the server-wide total.
+try:
+    MAX_CONCURRENT_SCANS = max(
+        1, int(os.environ.get("ROAD_MAX_CONCURRENT_SCANS", "3")))
+except (TypeError, ValueError):
+    # A bad env value must never crash startup — fall back to 3.
+    MAX_CONCURRENT_SCANS = 3
+SCAN_BUSY_MESSAGE = "Server is busy — try again in a bit."
+_SCAN_SEMAPHORE = threading.BoundedSemaphore(MAX_CONCURRENT_SCANS)
+
+
+def _acquire_scan_slot():
+    """Non-blocking acquire of one global scan slot. True when a
+    scan / Motus run may start, False when the server is at the cap."""
+    return _SCAN_SEMAPHORE.acquire(blocking=False)
+
+
+def _release_scan_slot():
+    """Release one global scan slot. Safe to call when no slot is held
+    (e.g. a run_scan invoked directly in tests) — BoundedSemaphore
+    raises ValueError on over-release, which is swallowed here."""
+    try:
+        _SCAN_SEMAPHORE.release()
+    except ValueError:
+        pass
+
+
+# --- log retention ---------------------------------------------------------
+# scan_log + check_history grow by 2 rows per MC checked, unbounded
+# (a 10,000-MC scan writes 20,000 rows). Keep the last 90 days
+# (ROAD_LOG_RETENTION_DAYS); pruning runs when a scan / Motus run
+# finishes, when the tables were just written to anyway. LOG ROWS
+# ONLY — carriers, scans, motus_runs, notes, error_mcs and every
+# other table are never touched.
+try:
+    LOG_RETENTION_DAYS = max(
+        1, int(os.environ.get("ROAD_LOG_RETENTION_DAYS", "90")))
+except (TypeError, ValueError):
+    LOG_RETENTION_DAYS = 90
+
+
+def _prune_old_logs():
+    """Delete scan_log / check_history rows older than LOG_RETENTION_DAYS.
+
+    check_history.checked_at is a full datetime, so it prunes directly.
+    scan_log.checked_at is only a time (HH:MM:SS), so scan_log rows are
+    pruned through their parent scan / Motus run start date instead;
+    a scan_log row whose parent is gone is left alone (never delete
+    what cannot be dated). Best-effort: never raises — a prune
+    failure must not fail the scan that just finished.
+    Returns (scan_log_deleted, check_history_deleted)."""
+    try:
+        cutoff = (datetime.now() - timedelta(days=LOG_RETENTION_DAYS)
+                  ).strftime("%Y-%m-%d %H:%M:%S")
+        conn = store.connect()
+        try:
+            cur1 = conn.execute(
+                "DELETE FROM check_history WHERE checked_at < ?", (cutoff,))
+            cur2 = conn.execute(
+                "DELETE FROM scan_log WHERE scan_id IN"
+                " (SELECT scan_id FROM scans WHERE started_at < ?)",
+                (cutoff,))
+            cur3 = conn.execute(
+                "DELETE FROM scan_log WHERE scan_id LIKE 'motus-%' AND"
+                " CAST(substr(scan_id, 7) AS INTEGER) IN"
+                " (SELECT id FROM motus_runs WHERE created_at < ?)",
+                (cutoff,))
+            conn.commit()
+            return cur2.rowcount + cur3.rowcount, cur1.rowcount
+        finally:
+            conn.close()
+    except Exception:
+        app.logger.exception("Log pruning failed")
+        return 0, 0
+
+
+# --- list pagination -------------------------------------------------------
+# Long HTML lists (Qualified Carriers, History, Error MCs) render ~50
+# rows per page with prev/next links. CSV exports stay full-export —
+# the export path runs before pagination and is never sliced.
+PAGE_SIZE = 50
+
+
+def _page_number(args):
+    """?page= value, clamped to >= 1 (garbage -> 1)."""
+    try:
+        page = int(args.get("page") or 1)
+    except (TypeError, ValueError):
+        page = 1
+    return max(1, page)
+
+
+def _paginate_rows(rows, page):
+    """Slice an already-filtered list for one page. Returns
+    (page_rows, total, pages, page) with page clamped into range."""
+    total = len(rows)
+    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = min(page, pages)
+    start = (page - 1) * PAGE_SIZE
+    return rows[start:start + PAGE_SIZE], total, pages, page
+
+
+def _page_links(endpoint, base_args, page, pages):
+    """Prev/next URLs for a paginated list, keeping every other query
+    param (filters, scan_id, sort, ...). base_args must not contain
+    'page' — it is set here. Returns (prev_url_or_None,
+    next_url_or_None)."""
+    args = {k: v for k, v in base_args.items() if k != "page"}
+    prev_url = url_for(endpoint, page=page - 1, **args) if page > 1 else None
+    next_url = url_for(endpoint, page=page + 1, **args) \
+        if page < pages else None
+    return prev_url, next_url
+
 
 def mark_stale_scans_paused(user_id):
     """A scan whose DB row still says 'running' but has no live thread is a
@@ -1050,15 +1175,29 @@ def _failed_rec(identifier, exc):
 
 
 def _safe_check_mc(mc, cargo_types):
+    # Scans always fetch LIVE SAFER data — the snapshot cache is for
+    # single / bulk searches only (see safer.py). A cached record
+    # would silently miss authority changes mid-scan.
+    # The TypeError fallback keeps older two-argument check_mc doubles
+    # (tests, and any other caller that replaced check_mc) working: a
+    # double that does not accept use_cache gets the plain call.
     try:
-        return check_mc(mc, cargo_types)
+        try:
+            return check_mc(mc, cargo_types, use_cache=False)
+        except TypeError:
+            return check_mc(mc, cargo_types)
     except Exception as exc:
         return _failed_rec(mc, exc)
 
 
 def _safe_check_usdot(usdot, cargo_types):
+    # Same live-only rule as _safe_check_mc (Motus runs are scans),
+    # same fallback for older two-argument doubles.
     try:
-        return check_usdot(usdot, cargo_types)
+        try:
+            return check_usdot(usdot, cargo_types, use_cache=False)
+        except TypeError:
+            return check_usdot(usdot, cargo_types)
     except Exception as exc:
         return _failed_rec(usdot, exc)
 
@@ -1257,6 +1396,10 @@ def run_scan(user_id, scan_db_id, scan_id, start_mc, end_mc, cargo_types,
         finally:
             conn.close()
         RUNNING_SCANS.pop(user_id, None)
+        # The global scan slot is released when the run ends, and old
+        # log rows are pruned now (see _prune_old_logs — log rows only).
+        _release_scan_slot()
+        _prune_old_logs()
 
 
 def _write_motus_result(user_id, run_db_id, kind, usdot, rec):
@@ -1357,6 +1500,9 @@ def run_motus(user_id, run_db_id, kind, usdots, cargo_types):
         finally:
             conn.close()
         RUNNING_MOTUS.pop(user_id, None)
+        # Same slot release + log prune as run_scan (see above).
+        _release_scan_slot()
+        _prune_old_logs()
 
 
 # ---------------------------------------------------------------- auth pages
@@ -1562,6 +1708,20 @@ def _run_carrier_search(q, stype, user_id=None):
 
 BULK_MAX_LINES = 50
 
+# Bulk deadline: a 50-line bulk run can otherwise exceed the 120 s
+# gunicorn worker timeout (worst case ~200 s: an auto-detect line costs
+# up to ~40 s when SAFER is slow) and die with no results at all. The
+# wait is capped at ROAD_BULK_DEADLINE_SECONDS (default 75 s — safely
+# under the 120 s timeout); lines still running at the deadline come
+# back as "Not checked" rows and the result is flagged partial, so the
+# user sees what finished and what to retry instead of a bare 500.
+try:
+    BULK_DEADLINE_SECONDS = float(
+        os.environ.get("ROAD_BULK_DEADLINE_SECONDS", "75"))
+except (TypeError, ValueError):
+    BULK_DEADLINE_SECONDS = 75.0
+BULK_DEADLINE_SECONDS = min(max(BULK_DEADLINE_SECONDS, 5.0), 110.0)
+
 
 def _bulk_row(input_text, kind, rec):
     return {"input": input_text, "kind": kind,
@@ -1617,7 +1777,11 @@ def _bulk_line_check(line):
 
 def _run_bulk_search(raw):
     """Bulk search: one MC/DOT per line, up to BULK_MAX_LINES, checked
-    in parallel. Returns the bulk result dict."""
+    in parallel. Returns the bulk result dict. The run is deadline-
+    bounded (BULK_DEADLINE_SECONDS): lines still running when the
+    deadline hits are returned as "Not checked" rows and the result
+    is flagged partial — the user gets what finished instead of a
+    worker timeout with nothing."""
     lines = [ln.strip() for ln in (raw or "").splitlines() if ln.strip()]
     seen, uniq = set(), []
     for ln in lines:
@@ -1628,24 +1792,46 @@ def _run_bulk_search(raw):
     capped = len(uniq) > BULK_MAX_LINES
     uniq = uniq[:BULK_MAX_LINES]
     rows = []
-    with concurrent.futures.ThreadPoolExecutor(
-            max_workers=SCAN_WORKERS) as ex:
+    unchecked = 0
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=SCAN_WORKERS)
+    try:
         futs = [ex.submit(_bulk_line_check, ln) for ln in uniq]
-        for fut in futs:  # in input order
-            try:
-                rows.extend(fut.result())
-            except Exception as exc:
-                rows.append({"input": "", "kind": "—", "mc_number": "",
+        done, _not_done = concurrent.futures.wait(
+            futs, timeout=BULK_DEADLINE_SECONDS)
+        for fut, ln in zip(futs, uniq):
+            if fut in done:
+                try:
+                    rows.extend(fut.result())
+                except Exception as exc:
+                    rows.append({"input": ln, "kind": "—", "mc_number": "",
+                                 "usdot_number": "", "legal_name": "",
+                                 "city": "", "state": "", "phone": "",
+                                 "status": "Error", "authority_status": "",
+                                 "cargo": "", "qualified": False,
+                                 "note": "Check failed: %s" % exc})
+            else:
+                # Past the deadline: report the line as not checked
+                # rather than dropping it silently.
+                unchecked += 1
+                rows.append({"input": ln, "kind": "—", "mc_number": "",
                              "usdot_number": "", "legal_name": "",
                              "city": "", "state": "", "phone": "",
-                             "status": "Error", "authority_status": "",
+                             "status": "Not checked", "authority_status": "",
                              "cargo": "", "qualified": False,
-                             "note": "Check failed: %s" % exc})
+                             "note": "Not checked — the bulk search ran out"
+                                     " of time. Try this number on its own."})
+    finally:
+        # Do NOT wait for stragglers: a hung SAFER fetch would hold
+        # this request past the gunicorn timeout. Running checks finish
+        # in the background; queued ones are cancelled.
+        ex.shutdown(wait=False, cancel_futures=True)
     return {"kind": "bulk", "rows": rows, "total": len(uniq),
+            "checked": len(uniq) - unchecked,
             "qualified": sum(1 for r in rows if r["qualified"]),
             "not_found": sum(1 for r in rows if r["status"] == "Not Found"),
             "errors": sum(1 for r in rows if r["status"] == "Error"),
-            "capped": capped, "cap": BULK_MAX_LINES}
+            "capped": capped, "cap": BULK_MAX_LINES,
+            "partial": unchecked > 0, "unchecked": unchecked}
 
 
 @app.route("/search", methods=["GET", "POST"])
@@ -2608,6 +2794,11 @@ def api_start_scan():
     if _demo_scan_too_big(user, start_mc, end_mc):
         return jsonify({"ok": False,
                         "error": DEMO_SCAN_LIMIT_MESSAGE}), 403
+    # Global scan cap: refuse (503 + clear message) when the server is
+    # already running MAX_CONCURRENT_SCANS scans / Motus runs — the
+    # slot is held by the background thread until the run ends.
+    if not _acquire_scan_slot():
+        return jsonify({"ok": False, "error": SCAN_BUSY_MESSAGE}), 503
     settings = get_settings(user["id"])
     cargo_types = selected_cargo(settings)
     # Scan-time Fleet Size filter from the Dashboard scan form (empty =
@@ -2621,25 +2812,32 @@ def api_start_scan():
     if commodity not in COMMODITIES:
         commodity = ""
     scan_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    conn = store.connect()
     try:
-        cur = conn.execute(
-            "INSERT INTO scans (user_id, scan_id, start_mc, end_mc, total,"
-            " started_at, min_pu, max_pu, commodity) VALUES (?,?,?,?,?,?,?,?,?)",
-            (user["id"], scan_id, start_mc, end_mc, end_mc - start_mc + 1,
-             now_str(), min_pu, max_pu, commodity or None))
-        conn.commit()
-        scan_db_id = cur.lastrowid
-    finally:
-        conn.close()
-    stop = threading.Event()
-    t = threading.Thread(target=run_scan,
-                         args=(user["id"], scan_db_id, scan_id, start_mc,
-                               end_mc, cargo_types, (min_pu, max_pu)),
-                         kwargs={"commodity": commodity or None},
-                         daemon=True)
-    RUNNING_SCANS[user["id"]] = {"stop": stop, "thread": t}
-    t.start()
+        conn = store.connect()
+        try:
+            cur = conn.execute(
+                "INSERT INTO scans (user_id, scan_id, start_mc, end_mc, total,"
+                " started_at, min_pu, max_pu, commodity) VALUES (?,?,?,?,?,?,?,?,?)",
+                (user["id"], scan_id, start_mc, end_mc, end_mc - start_mc + 1,
+                 now_str(), min_pu, max_pu, commodity or None))
+            conn.commit()
+            scan_db_id = cur.lastrowid
+        finally:
+            conn.close()
+        stop = threading.Event()
+        t = threading.Thread(target=run_scan,
+                             args=(user["id"], scan_db_id, scan_id, start_mc,
+                                   end_mc, cargo_types, (min_pu, max_pu)),
+                             kwargs={"commodity": commodity or None},
+                             daemon=True)
+        RUNNING_SCANS[user["id"]] = {"stop": stop, "thread": t}
+        t.start()
+    except Exception:
+        # The run never started: give the slot back so the cap does
+        # not leak, and leave the scan row for mark_stale_scans_paused.
+        RUNNING_SCANS.pop(user["id"], None)
+        _release_scan_slot()
+        raise
     return jsonify({"ok": True, "scan_id": scan_id})
 
 
@@ -2687,30 +2885,40 @@ def api_resume_scan():
     if resume_from > scan["end_mc"]:
         return jsonify({"ok": False,
                         "error": "That scan already finished."}), 400
+    # Global scan cap (see api_start_scan): refuse when the server is
+    # already running MAX_CONCURRENT_SCANS scans / Motus runs.
+    if not _acquire_scan_slot():
+        return jsonify({"ok": False, "error": SCAN_BUSY_MESSAGE}), 503
     settings = get_settings(user["id"])
     cargo_types = selected_cargo(settings)
     # The paused scan keeps the Fleet Size range and the Commodity
     # filter it started with.
     fleet = (scan.get("min_pu"), scan.get("max_pu"))
     commodity = scan.get("commodity") or None
-    conn = store.connect()
     try:
-        conn.execute(
-            "UPDATE scans SET status='running', started_at=?,"
-            " duration_seconds=0 WHERE id=?",
-            (now_str(), scan["id"]))
-        conn.commit()
-    finally:
-        conn.close()
-    stop = threading.Event()
-    t = threading.Thread(target=run_scan,
-                         args=(user["id"], scan["id"], scan["scan_id"],
-                               resume_from, scan["end_mc"], cargo_types,
-                               fleet),
-                         kwargs={"commodity": commodity},
-                         daemon=True)
-    RUNNING_SCANS[user["id"]] = {"stop": stop, "thread": t}
-    t.start()
+        conn = store.connect()
+        try:
+            conn.execute(
+                "UPDATE scans SET status='running', started_at=?,"
+                " duration_seconds=0 WHERE id=?",
+                (now_str(), scan["id"]))
+            conn.commit()
+        finally:
+            conn.close()
+        stop = threading.Event()
+        t = threading.Thread(target=run_scan,
+                             args=(user["id"], scan["id"], scan["scan_id"],
+                                   resume_from, scan["end_mc"], cargo_types,
+                                   fleet),
+                             kwargs={"commodity": commodity},
+                             daemon=True)
+        RUNNING_SCANS[user["id"]] = {"stop": stop, "thread": t}
+        t.start()
+    except Exception:
+        # The run never started: give the slot back (see start-scan).
+        RUNNING_SCANS.pop(user["id"], None)
+        _release_scan_slot()
+        raise
     return jsonify({"ok": True, "scan_id": scan["scan_id"],
                     "resumed_from": resume_from})
 
@@ -2855,23 +3063,37 @@ def _query_carriers(user_id, source, f):
         conn.close()
 
 
+def _qualified_page(user, source, title, endpoint, csv_name):
+    """Shared Qualified / Motus Qualified / Register Qualified page.
+    CSV export is the FULL filtered set (that is its purpose); the
+    HTML list is paginated (PAGE_SIZE per page, ?page=, prev/next
+    links keep every filter)."""
+    f = _carrier_filters(request.args)
+    rows, states = _query_carriers(user["id"], source, f)
+    if request.args.get("export") == "csv":
+        return _carriers_csv(rows, csv_name)
+    page_rows, total, pages, page = _paginate_rows(
+        rows, _page_number(request.args))
+    export_args = _export_args(request.args, f)
+    prev_url, next_url = _page_links(endpoint, export_args, page, pages)
+    return render_template("qualified.html", user=user, rows=page_rows,
+                           states=states, f=f,
+                           commodities=commodity_names(),
+                           commodity_trucks={c: equipment_label(c)
+                                             for c in commodity_names()},
+                           title=title, source=source, total=total,
+                           page=page, pages=pages, prev_url=prev_url,
+                           next_url=next_url,
+                           export_url=url_for(endpoint, export="csv",
+                                              **export_args))
+
+
 @app.route("/qualified")
 @login_required
 def qualified():
     user = current_user()
-    f = _carrier_filters(request.args)
-    rows, states = _query_carriers(user["id"], "scan", f)
-    if request.args.get("export") == "csv":
-        return _carriers_csv(rows, "qualified-carriers.csv")
-    # L6: drop a caller-supplied "export" arg before re-passing the query
-    # string to url_for (a duplicate keyword would 500).
-    export_args = _export_args(request.args, f)
-    return render_template("qualified.html", user=user, rows=rows, states=states,
-                           f=f, commodities=commodity_names(),
-                           commodity_trucks={c: equipment_label(c)
-                                             for c in commodity_names()},
-                           title="Qualified Carriers", source="scan",
-                           export_url=url_for("qualified", export="csv", **export_args))
+    return _qualified_page(user, "scan", "Qualified Carriers",
+                           "qualified", "qualified-carriers.csv")
 
 
 @app.route("/api/carrier/<int:cid>/star", methods=["POST"])
@@ -2965,24 +3187,35 @@ def _motus_page(kind, title):
         if len(usdots) > 5000:
             flash("At most 5,000 USDOTs per run.")
             return redirect(request.path)
+        # Global scan cap (see api_start_scan): refuse when the server
+        # is already running MAX_CONCURRENT_SCANS scans / Motus runs.
+        if not _acquire_scan_slot():
+            flash(SCAN_BUSY_MESSAGE)
+            return redirect(request.path)
         settings = get_settings(user["id"])
-        conn = store.connect()
         try:
-            cur = conn.execute(
-                "INSERT INTO motus_runs (user_id, kind, label, total, created_at)"
-                " VALUES (?,?,?,?,?)",
-                (user["id"], kind,
-                 "%s USDOTs pasted" % len(usdots), len(usdots), now_str()))
-            conn.commit()
-            run_db_id = cur.lastrowid
-        finally:
-            conn.close()
-        stop = threading.Event()
-        t = threading.Thread(target=run_motus,
-                             args=(user["id"], run_db_id, kind, usdots,
-                                   selected_cargo(settings)), daemon=True)
-        RUNNING_MOTUS[user["id"]] = {"stop": stop, "thread": t}
-        t.start()
+            conn = store.connect()
+            try:
+                cur = conn.execute(
+                    "INSERT INTO motus_runs (user_id, kind, label, total, created_at)"
+                    " VALUES (?,?,?,?,?)",
+                    (user["id"], kind,
+                     "%s USDOTs pasted" % len(usdots), len(usdots), now_str()))
+                conn.commit()
+                run_db_id = cur.lastrowid
+            finally:
+                conn.close()
+            stop = threading.Event()
+            t = threading.Thread(target=run_motus,
+                                 args=(user["id"], run_db_id, kind, usdots,
+                                       selected_cargo(settings)), daemon=True)
+            RUNNING_MOTUS[user["id"]] = {"stop": stop, "thread": t}
+            t.start()
+        except Exception:
+            # The run never started: give the slot back (see start-scan).
+            RUNNING_MOTUS.pop(user["id"], None)
+            _release_scan_slot()
+            raise
         return redirect(request.path)
     conn = store.connect()
     try:
@@ -3046,34 +3279,16 @@ def api_motus_stop():
 @login_required
 def motus_qualified():
     user = current_user()
-    f = _carrier_filters(request.args)
-    rows, states = _query_carriers(user["id"], "motus", f)
-    if request.args.get("export") == "csv":
-        return _carriers_csv(rows, "motus-qualified.csv")
-    export_args = _export_args(request.args, f)
-    return render_template("qualified.html", user=user, rows=rows, states=states,
-                           f=f, commodities=commodity_names(),
-                           commodity_trucks={c: equipment_label(c)
-                                             for c in commodity_names()},
-                           title="Motus Qualified", source="motus",
-                           export_url=url_for("motus_qualified", export="csv", **export_args))
+    return _qualified_page(user, "motus", "Motus Qualified",
+                           "motus_qualified", "motus-qualified.csv")
 
 
 @app.route("/register-qualified")
 @login_required
 def register_qualified():
     user = current_user()
-    f = _carrier_filters(request.args)
-    rows, states = _query_carriers(user["id"], "register", f)
-    if request.args.get("export") == "csv":
-        return _carriers_csv(rows, "register-qualified.csv")
-    export_args = _export_args(request.args, f)
-    return render_template("qualified.html", user=user, rows=rows, states=states,
-                           f=f, commodities=commodity_names(),
-                           commodity_trucks={c: equipment_label(c)
-                                             for c in commodity_names()},
-                           title="Register Qualified", source="register",
-                           export_url=url_for("register_qualified", export="csv", **export_args))
+    return _qualified_page(user, "register", "Register Qualified",
+                           "register_qualified", "register-qualified.csv")
 
 
 # ---------------------------------------------------------------- restarted / saved / notes / pickup lines
@@ -3333,15 +3548,32 @@ def history():
     user = current_user()
     conn = store.connect()
     try:
+        # Paginated (PAGE_SIZE per page, ?page=): both the scans table
+        # and the Motus runs table share the page — one page of each.
+        total_scans = conn.execute(
+            "SELECT COUNT(*) FROM scans WHERE user_id=?",
+            (user["id"],)).fetchone()[0]
+        total_runs = conn.execute(
+            "SELECT COUNT(*) FROM motus_runs WHERE user_id=?",
+            (user["id"],)).fetchone()[0]
+        pages = max(1, (max(total_scans, total_runs) + PAGE_SIZE - 1)
+                    // PAGE_SIZE)
+        page = min(_page_number(request.args), pages)
+        off = (page - 1) * PAGE_SIZE
         scans = conn.execute(
-            "SELECT * FROM scans WHERE user_id=? ORDER BY id DESC",
-            (user["id"],)).fetchall()
+            "SELECT * FROM scans WHERE user_id=? ORDER BY id DESC"
+            " LIMIT ? OFFSET ?", (user["id"], PAGE_SIZE, off)).fetchall()
         runs = conn.execute(
-            "SELECT * FROM motus_runs WHERE user_id=? ORDER BY id DESC",
-            (user["id"],)).fetchall()
+            "SELECT * FROM motus_runs WHERE user_id=? ORDER BY id DESC"
+            " LIMIT ? OFFSET ?", (user["id"], PAGE_SIZE, off)).fetchall()
+        prev_url, next_url = _page_links("history", request.args,
+                                         page, pages)
         return render_template("history.html", user=user,
                                scans=[dict(r) for r in scans],
-                               runs=[dict(r) for r in runs])
+                               runs=[dict(r) for r in runs],
+                               total_scans=total_scans, total_runs=total_runs,
+                               page=page, pages=pages,
+                               prev_url=prev_url, next_url=next_url)
     finally:
         conn.close()
 
@@ -3352,10 +3584,23 @@ def errors_page():
     user = current_user()
     conn = store.connect()
     try:
+        # Paginated (PAGE_SIZE per page, ?page=). Clear-all still
+        # clears every error MC for the user, not just this page.
+        total = conn.execute(
+            "SELECT COUNT(*) FROM error_mcs WHERE user_id=?",
+            (user["id"],)).fetchone()[0]
+        pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = min(_page_number(request.args), pages)
+        off = (page - 1) * PAGE_SIZE
         rows = conn.execute(
-            "SELECT * FROM error_mcs WHERE user_id=? ORDER BY id DESC",
-            (user["id"],)).fetchall()
-        return render_template("errors.html", user=user, rows=[dict(r) for r in rows])
+            "SELECT * FROM error_mcs WHERE user_id=? ORDER BY id DESC"
+            " LIMIT ? OFFSET ?", (user["id"], PAGE_SIZE, off)).fetchall()
+        prev_url, next_url = _page_links("errors_page", request.args,
+                                         page, pages)
+        return render_template("errors.html", user=user,
+                               rows=[dict(r) for r in rows], total=total,
+                               page=page, pages=pages,
+                               prev_url=prev_url, next_url=next_url)
     finally:
         conn.close()
 

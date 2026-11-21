@@ -4,7 +4,7 @@
 <div class="hero"><h1>{{ title }}</h1>
 <p>These are the good ones — authorised carriers with matching cargo. Ready to call.</p>
 <p class="next">What to do: tap a name, MC, DOT or phone number to copy it, then call. Tap View to see the carrier's full details. Tap the ★ star to save a carrier to Saved MCs.</p>
-<p class="muted">Showing {{ rows|length }} carriers.</p></div>
+<p class="muted">{% if pages > 1 %}Showing {{ rows|length }} of {{ total }} carriers — page {{ page }} of {{ pages }}.{% else %}Showing {{ rows|length }} carriers.{% endif %}</p></div>
 
 <div class="card">
   <form method="get" id="qualified-filter">
@@ -35,7 +35,7 @@
     </div>
     <div><label>&nbsp;</label><label class="checkbox"><input type="checkbox" name="starred" value="1" {% if f.starred %}checked{% endif %}> Starred only</label></div>
     <div><label>&nbsp;</label><button class="btn" type="submit">Filter</button></div>
-    <div><label>&nbsp;</label><a class="btn secondary" href="{{ export_url }}">Export CSV ({{ rows|length }} carriers)</a></div>
+    <div><label>&nbsp;</label><a class="btn secondary" href="{{ export_url }}">Export CSV ({{ total }} carriers)</a></div>
   </div>
   <div class="commodity-filter">
     <span class="commodity-label">Commodities — pick any (carriers hauling any of them show up)</span>
@@ -89,6 +89,13 @@
   {% endfor %}
   </tbody>
 </table></div>
+{% if pages > 1 %}
+<div class="pagination">
+  {% if prev_url %}<a class="btn secondary" href="{{ prev_url }}">← Previous</a>{% endif %}
+  <span class="muted">Page {{ page }} of {{ pages }}</span>
+  {% if next_url %}<a class="btn secondary" href="{{ next_url }}">Next →</a>{% endif %}
+</div>
+{% endif %}
 {% if not rows %}
 <div class="empty-state">
   <h3>No carriers here yet</h3>

@@ -56,9 +56,10 @@
 {% if result %}
   {% if result.kind == 'bulk' %}
     <div class="card">
-      <h2>Bulk results — {{ result.total }} checked</h2>
+      <h2>Bulk results — {% if result.partial %}{{ result.checked }} of {{ result.total }} checked (partial){% else %}{{ result.total }} checked{% endif %}</h2>
       <p><b>{{ result.qualified }} qualified</b> · {{ result.not_found }} not found{% if result.errors %} · <b>{{ result.errors }} errors</b>{% endif %}</p>
       {% if result.capped %}<p class="muted">Only the first {{ result.cap }} lines were checked — paste the rest in a second bulk search.</p>{% endif %}
+      {% if result.partial %}<p class="notice">This bulk search ran out of time — {{ result.unchecked }} of {{ result.total }} line(s) were not checked (marked “Not checked” below). Try those numbers on their own, or in a smaller bulk search.</p>{% endif %}
       <p><button class="btn secondary" type="button" onclick="downloadBulkCsv()">Download CSV</button> <button class="btn secondary" type="button" onclick="downloadBulkJson()">Download JSON</button></p>
       <div class="table-wrap"><table id="bulk-table">
         <thead><tr><th>Input</th><th>Carrier</th><th>MC / USDOT</th><th>Status</th><th>Authority</th><th>Phone</th><th>Location</th><th>Cargo</th></tr></thead>
