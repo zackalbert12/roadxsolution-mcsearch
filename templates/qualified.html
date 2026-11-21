@@ -66,7 +66,7 @@
       <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b><br><span class="muted">{% if r.usdot_number %}<button class="phone-copy" data-copy="{{ r.usdot_number }}" onclick="copyText(this)" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}</span></td>
       <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.legal_name }}</button></b>{% if r.dba_name %}<br><span class="muted">DBA: {{ r.dba_name }}</span>{% endif %}<br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
       <td>{{ r.state }}</td>
-      <td><button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button></td>
+      <td><button class="phone-copy" data-phone="{{ r.phone }}" onclick="copyPhone(this)"" title="Tap to copy">{{ r.phone }}</button></td>
       <td>{{ r.power_units }}</td>
       <td>{% for c in r.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}</td>
       <td>
@@ -108,7 +108,8 @@ function clearCommodities(){
   document.querySelectorAll('#qualified-filter input[name="commodity"]').forEach(function(cb){ cb.checked = false; });
   document.getElementById('qualified-filter').submit();
 }
-async function copyPhone(btn, phone){
+async function copyPhone(btn){
+  const phone = btn.getAttribute('data-phone');
   if(!phone) return;
   try { await navigator.clipboard.writeText(phone); }
   catch(e){

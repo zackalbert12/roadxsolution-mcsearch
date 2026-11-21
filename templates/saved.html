@@ -12,7 +12,7 @@
     <tr>
       <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b></td>
       <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.legal_name }}</button></b><br><span class="muted">{{ r.city }}, {{ r.state }}</span></td>
-      <td>{% if r.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td><td>{{ r.power_units }}</td>
+      <td>{% if r.phone %}<button class="phone-copy" data-phone="{{ r.phone }}" onclick="copyPhone(this)"" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td><td>{{ r.power_units }}</td>
       <td>{% for c in r.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}</td>
       <td><span class="calldot {{ r.call_status }}"></span>Calls: {{ r.calls }}</td>
       <td><a class="btn secondary" href="{{ url_for('carrier_search', q=r.mc_number, type='mc') }}">View</a>
@@ -32,7 +32,8 @@
 {% endif %}
 </div>
 <script>
-async function copyPhone(btn, phone){
+async function copyPhone(btn){
+  const phone = btn.getAttribute('data-phone');
   if(!phone) return;
   try { await navigator.clipboard.writeText(phone); }
   catch(e){

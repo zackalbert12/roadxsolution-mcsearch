@@ -72,7 +72,7 @@
             <td>{% if r.mc_number %}<button class="phone-copy {% if bulk_ok %}ok-green{% elif bulk_bad %}bad-red{% endif %}" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button><br>{% endif %}{% if r.usdot_number %}<button class="phone-copy {% if bulk_ok %}ok-green{% elif bulk_bad %}bad-red{% endif %}" data-copy="{{ r.usdot_number }}" onclick="copyText(this)" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}{% if not r.mc_number and not r.usdot_number %}—{% endif %}</td>
             <td>{% if r.status == 'Qualified' %}<span class="pill green">Qualified</span>{% elif r.status == 'Not Found' or r.status == 'Error' %}<span class="pill red">{{ r.status }}</span>{% else %}<span class="pill yellow">{{ r.status }}</span>{% endif %}</td>
             <td>{{ r.authority_status or '—' }}</td>
-            <td>{% if r.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td>
+            <td>{% if r.phone %}<button class="phone-copy" data-phone="{{ r.phone }}" onclick="copyPhone(this)"" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td>
             <td>{% if r.city %}{{ r.city }}, {{ r.state }}{% else %}—{% endif %}</td>
             <td>{{ r.cargo or '—' }}</td>
           </tr>
@@ -125,7 +125,7 @@
         <h3>Numbers</h3>
         <div class="detail-row"><span class="detail-label">MC number</span><span class="detail-value big">{% if rec.mc_number %}<button class="phone-copy {% if is_active %}ok-green{% else %}bad-red{% endif %}" data-copy="{{ rec.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ rec.mc_number }}</button>{% else %}—{% endif %}</span></div>
         <div class="detail-row"><span class="detail-label">USDOT number</span><span class="detail-value big">{% if rec.usdot_number %}<button class="phone-copy {% if is_active %}ok-green{% else %}bad-red{% endif %}" data-copy="{{ rec.usdot_number }}" onclick="copyText(this)" title="Tap to copy">{{ rec.usdot_number }}</button>{% else %}—{% endif %}</span></div>
-        <div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value big">{% if rec.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ rec.phone }}')" title="Tap to copy">{{ rec.phone }}</button>{% else %}—{% endif %}</span></div>
+        <div class="detail-row"><span class="detail-label">Phone</span><span class="detail-value big">{% if rec.phone %}<button class="phone-copy" data-phone="{{ rec.phone }}" onclick="copyPhone(this)"" title="Tap to copy">{{ rec.phone }}</button>{% else %}—{% endif %}</span></div>
       </div>
       <div class="detail-section">
         <h3>Address</h3>
@@ -189,7 +189,7 @@
             <td><b><button class="phone-copy ok-green" data-copy="{{ r.mc_number }}" onclick="copyText(this)" title="Tap to copy">MC-{{ r.mc_number }}</button></b><br><span class="muted">{% if r.usdot_number %}<button class="phone-copy" data-copy="{{ r.usdot_number }}" onclick="copyText(this)" title="Tap to copy">USDOT {{ r.usdot_number }}</button>{% endif %}</span></td>
             <td><b><button class="phone-copy" data-copy="{{ r.legal_name }}" onclick="copyText(this)" title="Tap to copy">{{ r.legal_name }}</button></b>{% if r.dba_name %}<br><span class="muted">DBA: {{ r.dba_name }}</span>{% endif %}</td>
             <td>{{ r.city }}, {{ r.state }}</td>
-            <td>{% if r.phone %}<button class="phone-copy" onclick="copyPhone(this, '{{ r.phone }}')" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td>
+            <td>{% if r.phone %}<button class="phone-copy" data-phone="{{ r.phone }}" onclick="copyPhone(this)"" title="Tap to copy">{{ r.phone }}</button>{% else %}—{% endif %}</td>
             <td>{% for c in r.cargo_carried %}<span class="chip">{{ c }}</span>{% endfor %}</td>
             <td><a class="btn secondary" href="{{ url_for('carrier_search', q=r.mc_number, type='mc') }}">Live check</a></td>
           </tr>
@@ -212,7 +212,8 @@ var SEARCH_PH = {auto: '000000, (000) 000-0000', mc: '000000', usdot: '000000', 
     sel.addEventListener('change', function(){ inp.placeholder = SEARCH_PH[sel.value] || SEARCH_PH.auto; });
   }
 })();
-async function copyPhone(btn, phone){
+async function copyPhone(btn){
+  const phone = btn.getAttribute('data-phone');
   if(!phone) return;
   try { await navigator.clipboard.writeText(phone); }
   catch(e){
