@@ -684,6 +684,8 @@ def _security_headers(resp):
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault("Strict-Transport-Security",
+                            "max-age=31536000; includeSubDomains")
     resp.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; script-src 'self' 'unsafe-inline'; "
@@ -697,6 +699,33 @@ def _security_headers(resp):
 # bare "Forbidden / Not Found / Internal Server Error" pages with no way
 # back. Rendering a template runs _inject_csrf, which re-issues a valid
 # CSRF token, so a 403 can be fixed by one reload.
+@app.errorhandler(400)
+def _handle_400(err):
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False,
+                        "error": "Bad request. Please try again."}), 400
+    return render_template("error_page.html", code=400,
+                           title="Bad request",
+                           message=("The request could not be understood. "
+                                    "Reload the page and try again."),
+                           show_reload=True,
+                           user=current_user()), 400
+
+
+@app.errorhandler(415)
+def _handle_415(err):
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False,
+                        "error": "Unsupported media type."}), 415
+    return render_template("error_page.html", code=415,
+                           title="Unsupported media type",
+                           message=("The request was sent in a format this "
+                                    "page does not accept. Reload the page "
+                                    "and try again."),
+                           show_reload=True,
+                           user=current_user()), 415
+
+
 @app.errorhandler(403)
 def _handle_403(err):
     if request.path.startswith("/api/"):
@@ -971,7 +1000,12 @@ RUNNING_MOTUS = {}   # user_id -> {"stop": Event, "thread": Thread}
 # Scan speed (like the original site): several MCs are checked at once
 # and SAFER requests rotate through proxies — about 5-7 checks/sec
 # instead of ~1/sec. Tune with ROAD_SCAN_WORKERS (default 10).
-SCAN_WORKERS = max(1, int(os.environ.get("ROAD_SCAN_WORKERS", "10")))
+SCAN_WORKERS = 10
+try:
+    SCAN_WORKERS = max(1, int(os.environ.get("ROAD_SCAN_WORKERS", "10")))
+except (TypeError, ValueError):
+    # A bad env value must never crash startup — fall back to 10.
+    SCAN_WORKERS = 10
 _DB_WRITE_LOCK = threading.Lock()  # serialise SQLite writes from workers
 
 
