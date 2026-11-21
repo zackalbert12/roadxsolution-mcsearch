@@ -269,6 +269,17 @@ tr:hover td { background: var(--surface-2); }
   text-transform: uppercase; letter-spacing: .6px; color: var(--heading); margin-bottom: 6px; }
 .expected-box .expected-trucks { font-size: 14px; }
 
+/* FMCSA SMS roadside inspections box (carrier detail page only) */
+.insp-box { background: var(--navy-pale); border: 1px dashed var(--brand);
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+.insp-head { display: flex; justify-content: space-between; align-items: center;
+  gap: 8px; margin-bottom: 6px; }
+.insp-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .6px; color: var(--heading); }
+.insp-type-row { display: flex; justify-content: space-between; gap: 8px;
+  font-size: 14px; padding: 2px 0; }
+.insp-vehicle { font-size: 14px; color: var(--grey-text); padding: 2px 0; }
+
 /* tap-to-copy phone numbers (Qualified Carriers, Saved, Restarted) */
 .phone-copy { background: none; border: none; padding: 0; margin: 0; font: inherit; color: var(--brand); cursor: pointer; text-align: left; white-space: nowrap; }
 .phone-copy:hover { text-decoration: underline; }

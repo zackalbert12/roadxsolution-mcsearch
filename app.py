@@ -47,7 +47,7 @@ except ImportError:  # pragma: no cover - missing dependency
     Fernet = None
 
 import db as store
-from safer import check_mc, check_usdot, search_by_name, fetch_company_officer
+from safer import check_mc, check_usdot, search_by_name, fetch_company_officer, fetch_inspections
 from commodity import (COMMODITIES, EQUIPMENT_COMMODITIES, commodity_names,
                         equipment_label, expected_trucks,
                         carrier_matches_commodity,
@@ -1737,13 +1737,23 @@ def _safer_url(param, value):
             "&query_string=%s" % (param, value))
 
 
-def _detail_result(rec, param):
-    """Wrap a classified SAFER record for the search page."""
+def _detail_result(rec, param, with_inspections=True):
+    """Wrap a classified SAFER record for the search page.
+
+    with_inspections=False skips the FMCSA SMS lookup (the ambiguous
+    choice page builds two detail results but renders neither box, so
+    it must not pay for two SMS fetches).
+    """
     value = rec.get("mc_number") if param == "MC_MX" else (
         rec.get("usdot_number") or rec.get("mc_number"))
     dot = rec.get("usdot_number") or ""
     if dot and not rec.get("owner_officer"):
         rec["owner_officer"] = fetch_company_officer(dot)
+    # FMCSA SMS roadside inspections — detail page only, never during
+    # scans (this function is only called from the public carrier
+    # search). A failed/slow SMS fetch returns None and the detail page
+    # simply shows no inspections box.
+    rec["inspections"] = fetch_inspections(dot) if (with_inspections and dot) else None
     # Cargo-based estimate of the carrier's truck types (SAFER records
     # no truck type) — shown in the "Expected Truck" box on the detail.
     # A BROKER, or a carrier with 0 power units, has no trucks to
@@ -1892,8 +1902,8 @@ def _run_carrier_search(q, stype, user_id=None):
         dot_usable, mc_usable = _usable(dot), _usable(mc)
         if dot_usable and mc_usable:
             return {"kind": "ambiguous", "number": stripped,
-                    "dot": _detail_result(dot, "USDOT"),
-                    "mc": _detail_result(mc, "MC_MX")}
+                    "dot": _detail_result(dot, "USDOT", with_inspections=False),
+                    "mc": _detail_result(mc, "MC_MX", with_inspections=False)}
         if dot_usable:
             return _detail_result(dot, "USDOT")
         if mc_usable:

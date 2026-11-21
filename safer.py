@@ -641,6 +641,229 @@ def fetch_company_officer(dot_number):
     return name
 
 
+# --- FMCSA SMS roadside inspections (detail page only) --------------------
+# The SAFER snapshot carries no inspection data. The public FMCSA SMS site
+# (ai.fmcsa.dot.gov) publishes each carrier's recent roadside inspections
+# as plain HTML pages — no API, no key. The artifact copy of this site
+# fetches the same pages; Flask mirrors it for the public carrier-search
+# detail page ONLY — never during scans (one detail view would cost up to
+# 6 extra SMS requests). Any failure just means "no inspections box".
+# Verified live 2026-11-22 against USDOT 4218222 (HOUSER'S HAULING LLC):
+# the inspection-list page and an event detail page both returned 200 in
+# under 1 s; the captured HTML is the fixture for the regression tests
+# (roadxsolution-mcsearch-tests/fixtures/sms_inspection_*.html).
+# NOTE: USDOT 45449115 (LUMU GROUP CORP) was Qualified in the user's
+# screenshots (03:01 PKT) but by 03:19 PKT SAFER returns an inactive empty
+# stub by MC (180640) and Not Found by USDOT, so SMS returns None for it;
+# its values in tests come from the screenshot, not a live fetch.
+SMS_BASE = "https://ai.fmcsa.dot.gov"
+SMS_LIST_URL = (SMS_BASE + "/SMS/Carrier/{dot}/BASIC/VehicleMaint"
+                "/Inspections/All/InspDateDESC/1.aspx")
+SMS_EVENT_URL = SMS_BASE + "/SMS/Event/Inspection/{event}.aspx"
+SMS_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+SMS_LIST_DEADLINE = 8     # hard seconds for the inspection-list page
+SMS_DETAIL_DEADLINE = 5   # hard seconds per inspection detail page
+SMS_DETAIL_BUDGET = 8     # hard seconds for all detail fetches together
+SMS_MAX_ROWS = 12         # inspection-list rows parsed (artifact cap)
+SMS_MAX_DETAILS = 5       # detail pages fetched (artifact cap)
+SMS_RETRY_DELAY = 0.6     # one retry, like the artifact, on an empty list
+SMS_MAX_VEHICLES = 4      # detail vehicles shown (artifact cap)
+SMS_MAX_TYPES = 4         # vehicle-type rows shown (artifact cap)
+INSPECTIONS_CACHE_TTL = 3600  # successful lookups
+INSPECTIONS_FAIL_TTL = 300    # failed lookups (retry soon)
+_INSPECTIONS_CACHE = {}   # dot -> (fetched_at_monotonic, data-or-None)
+
+# VIN model-year code (10th character). Commercial trucks on the road now
+# use the 2010-2030 cycle for letters and 2001-2009 for digits; K = 2019
+# (confirmed against the artifact's LUMU example: 2019 FRHT).
+_VIN_YEAR_LETTERS = {
+    "A": 2010, "B": 2011, "C": 2012, "D": 2013, "E": 2014, "F": 2015,
+    "G": 2016, "H": 2017, "J": 2018, "K": 2019, "L": 2020, "M": 2021,
+    "N": 2022, "P": 2023, "R": 2024, "S": 2025, "T": 2026, "V": 2027,
+    "W": 2028, "X": 2029, "Y": 2030,
+}
+
+
+def vin_model_year(vin):
+    """Model year from a 17-char VIN's 10th character, or None."""
+    v = (vin or "").strip().upper()
+    if len(v) < 10:
+        return None
+    ch = v[9]
+    if ch.isdigit():
+        return 2000 + int(ch) if ch != "0" else None
+    return _VIN_YEAR_LETTERS.get(ch)
+
+
+def _parse_inspection_list(html):
+    """Parse the SMS inspection-list page.
+
+    Returns [{date, report, state, plate, plate_state, vehicle_type,
+    event_id}] newest first (max SMS_MAX_ROWS), [] when the table is
+    there but has no rows, or None when the page is not a recognisable
+    inspection list at all (a markup change degrades to "no box"
+    instead of "no inspections").
+    """
+    soup = BeautifulSoup(html or "", "html.parser")
+    table = soup.find("table", id="inspectionTable")
+    if table is None:
+        return None
+    rows = []
+    body = table.find("tbody", class_="dataBody") or table
+    for tr in body.find_all("tr", class_="inspection"):
+        cells = tr.find_all("td")
+        if len(cells) < 6:
+            continue
+        date = cells[0].get_text(" ", strip=True)
+        if not re.match(r"^\d{1,2}/\d{1,2}/\d{4}$", date):
+            continue
+        event_id = None
+        link = cells[1].find("a", href=True)
+        if link:
+            m = re.search(r"/SMS/Event/Inspection/(\d+)\.aspx", link["href"])
+            if m:
+                event_id = m.group(1)
+        rows.append({
+            "date": date,
+            "report": cells[1].get_text(" ", strip=True),
+            "state": cells[2].get_text(" ", strip=True),
+            "plate": cells[3].get_text(" ", strip=True),
+            "plate_state": cells[4].get_text(" ", strip=True),
+            "vehicle_type": cells[5].get_text(" ", strip=True),
+            "event_id": event_id,
+        })
+        if len(rows) >= SMS_MAX_ROWS:
+            break
+    return rows
+
+
+def _parse_inspection_event(html):
+    """Parse one SMS inspection detail page into its vehicles.
+
+    Returns [{unit, type, make, plate_state, plate, vin, year}] from the
+    #vehicleTable, or [] when the table is absent/unparseable.
+    """
+    soup = BeautifulSoup(html or "", "html.parser")
+    table = soup.find("table", id="vehicleTable")
+    if table is None:
+        return []
+    vehicles = []
+    body = table.find("tbody") or table
+    for tr in body.find_all("tr"):
+        cells = tr.find_all("td")
+        if len(cells) < 6:
+            continue
+        vin = cells[5].get_text(" ", strip=True)
+        vehicles.append({
+            "unit": cells[0].get_text(" ", strip=True),
+            "type": cells[1].get_text(" ", strip=True),
+            "make": cells[2].get_text(" ", strip=True),
+            "plate_state": cells[3].get_text(" ", strip=True),
+            "plate": cells[4].get_text(" ", strip=True),
+            "vin": vin,
+            "year": vin_model_year(vin),
+        })
+    return vehicles
+
+
+def _sms_get(url, deadline):
+    """One SMS GET with a hard deadline. Returns (status, text)."""
+    r, _err, _timed_out = _request_with_deadline(
+        lambda: requests.get(url, headers=SMS_HEADERS,
+                             timeout=(5, deadline)),
+        deadline=deadline)
+    if r is None:
+        return None, None
+    return r.status_code, r.text
+
+
+def fetch_inspections(dot_number):
+    """Roadside inspections for a USDOT from FMCSA SMS (detail page only).
+
+    Returns {"total": n, "types": [(vehicle_type, count), ...] sorted by
+    count desc then name, "vehicles": [{type, make, year, ...}] deduped by
+    type|make|year} — or None when SMS cannot be reached or parsed (the
+    detail page then simply shows no inspections box).
+    """
+    dot = "".join(ch for ch in str(dot_number or "") if ch.isdigit())
+    if not dot:
+        return None
+    now = time.monotonic()
+    hit = _INSPECTIONS_CACHE.get(dot)
+    if hit is not None:
+        fetched_at, data = hit
+        ttl = INSPECTIONS_CACHE_TTL if data is not None else INSPECTIONS_FAIL_TTL
+        if now - fetched_at < ttl:
+            return data
+    data = _fetch_inspections_live(dot)
+    if len(_INSPECTIONS_CACHE) >= 1000:
+        _INSPECTIONS_CACHE.pop(next(iter(_INSPECTIONS_CACHE)))
+    _INSPECTIONS_CACHE[dot] = (now, data)
+    return data
+
+
+def _fetch_inspections_live(dot):
+    status, html = _sms_get(SMS_LIST_URL.format(dot=dot), SMS_LIST_DEADLINE)
+    rows = _parse_inspection_list(html) if status == 200 and html else None
+    if not rows:
+        # One retry, like the artifact: SMS sometimes answers empty first.
+        time.sleep(SMS_RETRY_DELAY)
+        status, html = _sms_get(SMS_LIST_URL.format(dot=dot), SMS_LIST_DEADLINE)
+        rows = _parse_inspection_list(html) if status == 200 and html else None
+    if rows is None:
+        return None
+    # Vehicle-type counts come from the list rows (all of them).
+    counts = {}
+    for row in rows:
+        t = row["vehicle_type"]
+        if t:
+            counts[t] = counts.get(t, 0) + 1
+    types = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    # Detail vehicles (make + VIN year) from the first few inspections,
+    # fetched in parallel so one slow page cannot stall the detail view.
+    vehicles = []
+    seen = set()
+    event_ids = [r["event_id"] for r in rows[:SMS_MAX_DETAILS] if r["event_id"]]
+    if event_ids:
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(event_ids))
+        try:
+            futs = {eid: pool.submit(
+                _sms_get, SMS_EVENT_URL.format(event=eid),
+                SMS_DETAIL_DEADLINE) for eid in event_ids}
+            done, _pending = concurrent.futures.wait(
+                list(futs.values()), timeout=SMS_DETAIL_BUDGET)
+            for eid in event_ids:
+                if len(vehicles) >= SMS_MAX_VEHICLES:
+                    break
+                fut = futs[eid]
+                if fut not in done:
+                    continue
+                try:
+                    st, page = fut.result()
+                except Exception:
+                    continue
+                if st != 200 or not page:
+                    continue
+                for v in _parse_inspection_event(page):
+                    key = (v["type"], v["make"], v["year"])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    vehicles.append(v)
+                    if len(vehicles) >= SMS_MAX_VEHICLES:
+                        break
+        finally:
+            pool.shutdown(wait=False)
+    return {"total": len(rows), "types": types, "vehicles": vehicles}
+
+
 def check_mc(mc_number, selected_cargo=("general", "fresh", "reefer"), delay=DELAY,
              direct_first=False, use_cache=True):
     """Fetch + classify one MC. Returns the record dict with status/note/qualified.

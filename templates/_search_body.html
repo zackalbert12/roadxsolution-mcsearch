@@ -107,6 +107,25 @@
           <div class="muted text-xs">Cargo se andaza — confirm nahi.</div>
         </div>
       </div>
+      {% if rec.inspections is not none %}
+      <div class="insp-box">
+        <div class="insp-head">
+          <span class="insp-title">Vehicles in Inspections</span>
+          <span class="pill">{{ rec.inspections.total }} INSP.</span>
+        </div>
+        {% if rec.inspections.total == 0 %}
+          <div class="muted">No roadside inspections recorded in the last 24 months.</div>
+        {% else %}
+          {% for t, c in rec.inspections.types[:4] %}
+          <div class="insp-type-row"><span>{{ t }}</span><span>&times;{{ c }}</span></div>
+          {% endfor %}
+          {% for v in rec.inspections.vehicles[:4] %}
+          <div class="insp-vehicle">{% if v.year %}{{ v.year }} {% endif %}{{ v.make }} — {{ v.type }}</div>
+          {% endfor %}
+        {% endif %}
+        <div class="muted text-xs">Vehicle types recorded in this carrier's FMCSA roadside inspections (last 24 months).</div>
+      </div>
+      {% endif %}
       <p><button class="btn copy-all-btn" type="button"
         data-name="{{ rec.legal_name }}" data-dba="{{ rec.dba_name or '' }}"
         data-owner="{{ rec.owner_officer or '' }}"

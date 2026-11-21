@@ -271,23 +271,52 @@ def filter_carriers_by_commodity(carriers, commodity):
     return out
 
 
+# The artifact copy's Expected Truck rules (CARGO_TRUCK_RULES) check cargo
+# most-specific first with General Freight last, and map it to exactly
+# ['Dry Van', 'Box Truck'] — so a General Freight carrier shows those two
+# only, in that order. Flask's vote-based estimate used to list six types
+# for the same cargo. Direct commodity-name matches below use the
+# artifact's order for General Freight; anything else keeps its
+# COMMODITIES equipment order.
+ARTIFACT_TRUCK_ORDER = {
+    "General Freight": ["Dry Van", "Box Truck"],
+}
+
+
 def expected_trucks(cargo_carried):
     """Estimate a carrier's truck types from its SAFER cargo list.
 
-    SAFER does not record truck type, so this is a best guess only: for
-    each commodity whose SAFER cargo keywords intersect the carrier's
-    cargo list, each of its equipment types gets one vote. Equipment is
-    ordered by votes descending, ties alphabetical. Returns [] when
-    there is no cargo or no commodity matches. Only the existing
-    COMMODITIES data is used — no new cargo mappings.
+    SAFER does not record truck type, so this is a best guess only.
+    Tier 1 — direct match: a cargo item that IS a commodity name uses
+    that commodity's equipment (General Freight in the artifact's rule
+    order); matches accumulate in cargo order, deduped, max 6. Tier 2 —
+    fallback: the vote-based estimate below, for cargo that names no
+    commodity directly (unchanged behaviour). Returns [] when there is
+    no cargo or nothing matches.
     """
-    cargo = [c.strip().lower() for c in (cargo_carried or [])
-             if c and c.strip()]
+    cargo = [c.strip() for c in (cargo_carried or []) if c and c.strip()]
     if not cargo:
         return []
+    lowered = {name.lower(): (name, info)
+               for name, info in COMMODITIES.items()}
+    direct = []
+    for item in cargo:
+        hit = lowered.get(item.lower())
+        if hit is None:
+            continue
+        name, info = hit
+        eq = ARTIFACT_TRUCK_ORDER.get(name, info["equipment"])
+        for e in eq:
+            if e not in direct:
+                direct.append(e)
+        if len(direct) >= 6:
+            break
+    if direct:
+        return direct[:6]
     votes = {}
+    lowered_cargo = [c.lower() for c in cargo]
     for info in COMMODITIES.values():
-        if any(kw.lower() in cargo for kw in info["keywords"]):
+        if any(kw.lower() in lowered_cargo for kw in info["keywords"]):
             for eq in info["equipment"]:
                 votes[eq] = votes.get(eq, 0) + 1
     return sorted(votes, key=lambda eq: (-votes[eq], eq))
