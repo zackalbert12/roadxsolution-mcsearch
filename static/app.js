@@ -59,6 +59,25 @@ async function copyPhone(btn) {
 /* Tap-to-copy + theme toggle, wired by delegation so buttons rendered
    anywhere (search results, qualified, saved, restarted) just work. */
 document.addEventListener('click', function (e) {
+  var navToggle = e.target.closest('.nav-toggle');
+  if (navToggle) {
+    var open = document.body.classList.toggle('nav-open');
+    navToggle.textContent = open ? '✕' : '☰';
+    navToggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+    return;
+  }
+  if (e.target.closest('.nav-overlay')) {
+    document.body.classList.remove('nav-open');
+    var t = document.querySelector('.nav-toggle');
+    if (t) { t.textContent = '☰'; t.setAttribute('aria-label', 'Open menu'); }
+    return;
+  }
+  if (e.target.closest('.sidebar nav a')) {
+    document.body.classList.remove('nav-open');
+    var t2 = document.querySelector('.nav-toggle');
+    if (t2) { t2.textContent = '☰'; t2.setAttribute('aria-label', 'Open menu'); }
+    return;
+  }
   var themeBtn = e.target.closest('.theme-toggle');
   if (themeBtn) { toggleTheme(); return; }
   var copyBtn = e.target.closest('[data-copy]');
@@ -67,6 +86,15 @@ document.addEventListener('click', function (e) {
   if (phoneBtn) { copyPhone(phoneBtn); return; }
   var reloadLink = e.target.closest('[data-reload]');
   if (reloadLink) { e.preventDefault(); location.reload(); }
+});
+
+/* Mobile nav drawer: Escape closes it. */
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') {
+    document.body.classList.remove('nav-open');
+    var t = document.querySelector('.nav-toggle');
+    if (t) { t.textContent = '☰'; t.setAttribute('aria-label', 'Open menu'); }
+  }
 });
 
 /* Generic confirm: any <form data-confirm="..."> asks before submitting. */

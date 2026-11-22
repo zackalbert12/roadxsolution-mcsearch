@@ -359,17 +359,9 @@ input[type=date], select, textarea { padding: 14px 16px; font-size: 16px; }
 /* Example buttons under the search box */
 .example-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
 
-/* Mobile: sidebar becomes a top bar with a sideways-scrolling menu */
+/* Mobile: tighter page padding; the sidebar itself becomes a hamburger
+   drawer (see the drawer rules further down — "Mobile-first responsive"). */
 @media (max-width: 800px) {
-  .sidebar { position: static; width: 100%; border-right: none;
-    border-bottom: 1px solid var(--border); padding: 8px 0 0; }
-  .sidebar nav { display: flex; overflow-x: auto; padding: 4px 8px 8px; gap: 2px; }
-  .sidebar nav a { white-space: nowrap; border-left: none;
-    border-bottom: 3px solid transparent; padding: 8px 10px; }
-  .sidebar nav a.active { border-bottom-color: var(--brand); background: transparent; }
-  .nav-group { display: none; }
-  .brand { padding: 0; margin: 2px 10px 8px; }
-  .brand-logo { width: 160px; }
   .main { margin-left: 0; }
   .content { padding: 20px; }
   .topbar { padding: 12px 20px; }
@@ -509,3 +501,89 @@ input.input-narrow { width: 130px; padding: 6px; }
 .auth-wrap.wide { max-width: 1100px; }
 /* Scan progress bar starts empty; dashboard.js sets its width live */
 #bar { width: 0; }
+
+/* ---- Mobile-first responsive UI/UX 2026-11-22: the site must feel like
+   an app on a phone. Desktop (min-width 1024px) is untouched — every
+   rule below lives inside a max-width media query. ---- */
+/* Hamburger button (topbar) + drawer backdrop — hidden on desktop. */
+.nav-toggle { display: none; align-items: center; justify-content: center;
+  width: 44px; height: 44px; flex: none; background: var(--surface);
+  color: var(--text); border: 1px solid var(--border); border-radius: 12px;
+  font-size: 22px; font-weight: 700; cursor: pointer; }
+.nav-overlay { display: none; }
+/* Mobile error state: on a failed check the detail card shows only the
+   verdict + a Try again button — no empty fields, no Expected Truck box.
+   Desktop shows the full card as before. */
+.detail-retry-row { display: none; }
+
+@media (max-width: 800px) {
+  /* Hamburger drawer: the sidebar slides in from the left instead of
+     eating the top of every page with a logo + sideways-scrolling menu. */
+  .nav-toggle { display: inline-flex; }
+  .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 280px;
+    max-width: 85vw; z-index: 100; padding: 14px 0; border-bottom: none;
+    transform: translateX(-105%); transition: transform .22s ease; }
+  body.nav-open .sidebar { transform: translateX(0); }
+  body.nav-open { overflow: hidden; }
+  body.nav-open .nav-overlay { display: block; position: fixed; inset: 0;
+    background: rgba(7, 20, 38, .55); z-index: 90; }
+  .sidebar nav { display: block; padding: 12px 0; overflow: visible; }
+  .sidebar nav a { white-space: normal; border-left: 4px solid transparent;
+    border-bottom: none; padding: 12px 20px; }
+  .sidebar nav a.active { border-bottom-color: transparent;
+    border-left-color: var(--brand); background: rgba(210,31,43,.28); }
+  .nav-group { display: block; }
+  .brand { padding: 0; margin: 2px 14px 10px; }
+  .brand-logo { width: 200px; }
+  /* Commodity chips: a sideways-scrolling strip instead of a 50-chip
+     wall that pushes the carrier table far down the page. */
+  .chip-select { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 6px; }
+  .chip-check { flex: none; }
+  .chip-check span { white-space: nowrap; }
+  /* Failed check (Error / Not Found): hide the empty detail card and
+     show only the verdict + a full-width Try again button. */
+  .detail-error .detail-head,
+  .detail-error .insp-box,
+  .detail-error .copy-all-row,
+  .detail-error .detail-section,
+  .detail-error .detail-safer-link,
+  .detail-error .detail-matched { display: none; }
+  .detail-error .detail-retry-row { display: block; margin: 0 0 4px; }
+  .detail-error .detail-retry-row .btn { width: 100%; text-align: center; }
+}
+
+/* Phones (<=480px): tighter spacing, full-width forms, ~44px tap targets. */
+@media (max-width: 480px) {
+  .content { padding: 16px; }
+  h1 { font-size: 24px; }
+  .hero { padding: 18px; }
+  .card { padding: 16px; }
+  .detail-verdict { margin: -16px -16px 14px; padding: 14px 16px; font-size: 16px; }
+  .topbar { padding: 10px 12px; }
+  .topbar .who { display: none; }
+  .theme-toggle-label { display: none; }
+  .theme-toggle { padding: 8px 10px; }
+  /* Forms stack full-width so fields and buttons are thumb-friendly. */
+  .form-row > div { flex: 1 1 100%; min-width: 0; }
+  .fleet-row .fleet-box { flex: 1 1 100%; }
+  .form-row .btn { width: 100%; text-align: center; }
+  .stat { padding: 12px; }
+  .stat .value { font-size: 24px; }
+  th, td { padding: 10px 8px; font-size: 14px; }
+  .call-select { width: 100%; min-height: 40px; }
+  .star { font-size: 24px; padding: 6px 8px; }
+  .btn.small { padding: 11px 14px; }
+  .tabs button { padding: 12px 10px; }
+  .auth-wrap { margin: 24px 12px; }
+  .auth-card { padding: 24px 20px; }
+  .auth-logo { width: 140px; height: 140px; }
+  .search-hero { padding: 20px 16px; }
+  .search-hero h1 { font-size: 24px; }
+  .tabrow .btn { flex: 1; text-align: center; }
+  .pagination { flex-wrap: wrap; gap: 8px; }
+  .detail-head { flex-direction: column; }
+  .detail-head .expected-box { flex: 1 1 100%; width: 100%; }
+  .detail-head-main h2 { font-size: 22px; }
+  .chip-check span { padding: 9px 14px; }
+}
+

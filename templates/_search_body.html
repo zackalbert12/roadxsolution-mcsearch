@@ -84,7 +84,8 @@
   {% elif result.kind == 'detail' %}
     {% set rec = result.rec %}
     {% set is_active = rec.found and not rec.inactive and not rec.fetch_error and (rec.authority_status or '').upper().startswith('AUTHORIZED FOR') %}
-    <div class="card">
+    {% set is_failed = rec.status in ('Error', 'Not Found') %}
+    <div class="card{% if is_failed %} detail-error{% endif %}">
       {% if rec.status == 'Qualified' %}
       <div class="detail-verdict good">Good to call — this carrier is authorised and hauls cargo that matches.</div>
       {% elif rec.status == 'Not Found' %}
@@ -93,6 +94,9 @@
       <div class="detail-verdict bad">The check failed — try again in a moment.</div>
       {% else %}
       <div class="detail-verdict warn">Skipped — see the reason in the Status section below.</div>
+      {% endif %}
+      {% if is_failed %}
+      <p class="detail-retry-row"><a class="btn" href="{{ url_for('carrier_search', q=q, type=stype) }}">Try again</a></p>
       {% endif %}
       <div class="detail-head">
         <div class="detail-head-main">
@@ -135,14 +139,14 @@
         <div class="muted text-xs">Vehicle types recorded in this carrier's FMCSA roadside inspections (last 24 months).</div>
       </div>
       {% endif %}
-      <p><button class="btn copy-all-btn" type="button"
+      <p class="copy-all-row"><button class="btn copy-all-btn" type="button"
         data-name="{{ rec.legal_name }}" data-dba="{{ rec.dba_name or '' }}"
         data-owner="{{ rec.owner_officer or '' }}"
         data-mc="{{ rec.mc_number }}" data-dot="{{ rec.usdot_number }}"
         data-phone="{{ rec.phone or '' }}"
         data-expected="{{ rec.expected_trucks | join(', ') }}"
         data-address="{{ rec.address_line1 or '' }}{% if rec.city %}, {{ rec.city }}, {{ rec.state }}{% endif %}">Copy all details</button></p>
-      {% if result.matched %}<p class="muted">Matched name search: <b>{{ result.matched.name }}</b> — {{ result.matched.location }}</p>{% endif %}
+      {% if result.matched %}<p class="muted detail-matched">Matched name search: <b>{{ result.matched.name }}</b> — {{ result.matched.location }}</p>{% endif %}
       <div class="detail-section">
         <h3>Carrier</h3>
         <div class="detail-row"><span class="detail-label">Legal name</span><span class="detail-value big"><button class="phone-copy" data-copy="{{ rec.legal_name }}" title="Tap to copy">{{ rec.legal_name or '—' }}</button></span></div>
@@ -170,7 +174,7 @@
         <div class="detail-row"><span class="detail-label">Authority</span><span class="detail-value {% if is_active %}ok-green{% else %}bad-red{% endif %}"><b>{{ rec.authority_status or '—' }}</b></span></div>
         <div class="detail-row"><span class="detail-label">Result</span><span class="detail-value"><b>{{ rec.status }}</b>{% if rec.note %}<br><span class="muted">{{ rec.note }}</span>{% endif %}</span></div>
       </div>
-      <p class="mt-12"><a href="{{ result.safer_url }}" target="_blank" rel="noopener">Verify directly on FMCSA SAFER Web ↗</a></p>
+      <p class="mt-12 detail-safer-link"><a href="{{ result.safer_url }}" target="_blank" rel="noopener">Verify directly on FMCSA SAFER Web ↗</a></p>
     </div>
   {% elif result.kind == 'ambiguous' %}
     <div class="card">
