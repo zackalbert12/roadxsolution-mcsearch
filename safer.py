@@ -13,9 +13,14 @@ site) so one IP never hammers SAFER; single searches go DIRECT FIRST
 pool itself is health-checked once per cache TTL — dead/slow
 proxies never reach the rotation. There is no free proxy list:
 ROAD_PROXIES pins proxies explicitly, otherwise fetches go direct.
+HTTP 403 (SAFER refusing the server's egress IP) is also retryable:
+when ROAD_SAFER_RELAY_URL is set (a Cloudflare Worker — see
+cloudflare-worker.js), the relay is the last-resort attempt, on a
+different egress IP.
 """
 import concurrent.futures
 import copy
+import logging
 import os
 import re
 import threading
@@ -23,6 +28,8 @@ import time
 import random
 import requests
 from bs4 import BeautifulSoup
+
+_log = logging.getLogger(__name__)
 
 SAFER_URL = "https://safer.fmcsa.dot.gov/query.asp"
 HEADERS = {
@@ -203,6 +210,24 @@ def _next_proxy(proxies):
         proxy = proxies[_PROXY_POOL["idx"] % len(proxies)]
         _PROXY_POOL["idx"] += 1
     return proxy
+
+# --- SAFER relay (Cloudflare Worker, free tier) ---------------------------
+# SAFER answers HTTP 403 to Render's shared egress IP (verified live
+# 2026-11-22: every search 403s from Render while the identical request
+# returns 200 from any other IP). A relay on a different egress IP
+# restores service: set ROAD_SAFER_RELAY_URL to a Cloudflare Worker
+# URL (see cloudflare-worker.js) and SAFER fetches fall back to it
+# when the direct request is blocked. Direct is always tried first,
+# so the relay costs nothing while Render is unblocked, and the relay
+# is a plain path+query forwarder — it never sees credentials, only
+# public MC/USDOT numbers.
+_RELAY_SENTINEL = "RELAY"
+
+
+def _safer_relay_url():
+    """Relay base URL from the environment (empty = no relay). Read
+    per call so tests can set it without reimporting."""
+    return os.environ.get("ROAD_SAFER_RELAY_URL", "").strip().rstrip("/")
 
 # --- SAFER snapshot cache (single / bulk searches only) -------------------
 # A repeat search for the same MC/USDOT hits this in-memory cache instead
@@ -456,13 +481,16 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY,
                 attempts.append(p)
                 seen.add(p)
         attempts.append(None)  # direct
+        if _safer_relay_url():
+            attempts.append(_RELAY_SENTINEL)  # last resort: other egress IP
     proxies_loaded = not direct_first
 
     def _maybe_load_proxies():
         """Direct-first only: on the first failed direct attempt, load
         the health-checked proxy pool and append fresh proxies to the
-        attempt list. No-op in proxy-first mode (pool already loaded)
-        and on later calls (pool already appended)."""
+        attempt list (plus the relay, when configured, as the last
+        resort). No-op in proxy-first mode (pool already loaded) and
+        on later calls (pool already appended)."""
         nonlocal proxies_loaded
         if not direct_first or proxies_loaded:
             return
@@ -473,6 +501,8 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY,
             if p and p not in seen:
                 attempts.append(p)
                 seen.add(p)
+        if _safer_relay_url():
+            attempts.append(_RELAY_SENTINEL)
 
     last_err = None
     started = time.time()
@@ -485,10 +515,16 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY,
         remaining = SAFER_TOTAL_BUDGET - (time.time() - started)
         if remaining <= 0:
             break
-        req_proxies = {"http": proxy, "https": proxy} if proxy else None
+        req_proxies = None
+        url = SAFER_URL
+        if proxy == _RELAY_SENTINEL:
+            # Relay: same path+query, different egress IP, no proxy.
+            url = _safer_relay_url() + "/query.asp"
+        elif proxy:
+            req_proxies = {"http": proxy, "https": proxy}
         resp, err, timed_out = _request_with_deadline(
-            lambda _rp=req_proxies: requests.get(
-                SAFER_URL, params=params, headers=HEADERS,
+            lambda _rp=req_proxies, _u=url: requests.get(
+                _u, params=params, headers=HEADERS,
                 timeout=(SAFER_CONNECT_TIMEOUT, SAFER_READ_TIMEOUT),
                 proxies=_rp),
             deadline=min(SAFER_ATTEMPT_DEADLINE, remaining))
@@ -497,27 +533,37 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY,
             last_err = "Fetch timed out (connection stalled)"
             if proxy is not None and not direct_first:
                 # A hung proxy is never going to answer: skip any
-                # remaining proxies and go straight to the direct attempt.
+                # remaining proxies and go straight to the direct attempt
+                # (and the relay, when configured, as the last resort).
                 attempts = attempts[:attempt] + [None]
+                if _safer_relay_url() \
+                        and _RELAY_SENTINEL not in attempts:
+                    attempts.append(_RELAY_SENTINEL)
             # In direct-first mode a stalled attempt just falls through
             # to the next one (proxy fallback, or the error below).
         elif err is not None:
             last_err = "Fetch error: %s" % err
             # Dead proxy / network error: rotate immediately, no sleep —
             # the next proxy is a different IP, so waiting helps nothing.
-        elif resp.status_code in (429, 503) or resp.status_code >= 500:
-            # SAFER itself is rate-limiting: wait, then retry. Load the
-            # proxy pool first when direct just got throttled, so the
-            # retry can go through a different IP.
+        elif resp.status_code in (403, 429, 503) or resp.status_code >= 500:
+            # SAFER itself is refusing or rate-limiting: retry through
+            # a different IP. Load the proxy pool / relay first when
+            # direct just got refused, so the retry can go through one.
             last_err = "HTTP %s from SAFER" % resp.status_code
             _maybe_load_proxies()
             if attempt < len(attempts):
-                wait = BACKOFF[min(attempt - 1, len(BACKOFF) - 1)]
+                # A 403 means this IP is blocked: waiting helps nothing
+                # (the next attempt is a different IP), so rotate at
+                # once. 429/5xx keep the backoff.
+                wait = 0 if resp.status_code == 403 else \
+                    BACKOFF[min(attempt - 1, len(BACKOFF) - 1)]
                 remaining = SAFER_TOTAL_BUDGET - (time.time() - started)
                 if remaining <= 0:
                     break
                 time.sleep(min(wait, remaining))
                 continue
+            _log.warning("SAFER fetch failed for %s %s: %s",
+                         param, identifier, last_err)
             return _error_record(identifier, last_err), last_err
         else:
             try:
@@ -538,6 +584,8 @@ def fetch_snapshot(identifier, param="MC_MX", delay=DELAY,
         # Direct failed in direct-first mode: load the (health-checked)
         # proxy pool now and append fresh proxies to the attempt list.
         _maybe_load_proxies()
+    _log.warning("SAFER fetch failed for %s %s: %s",
+                 param, identifier, last_err or "Fetch error")
     return _error_record(identifier, last_err or "Fetch error"), last_err
 
 
@@ -960,11 +1008,14 @@ def search_by_name(name, limit=50, direct_first=False):
                 attempts.append(p)
                 seen.add(p)
         attempts.append(None)  # final direct attempt
+        if _safer_relay_url():
+            attempts.append(_RELAY_SENTINEL)  # last resort: other egress IP
     proxies_loaded = not direct_first
 
     def _maybe_load_proxies():
         """Direct-first only: on the first failed direct attempt, load
-        the health-checked proxy pool and append fresh proxies."""
+        the health-checked proxy pool and append fresh proxies (plus
+        the relay, when configured, as the last resort)."""
         nonlocal proxies_loaded
         if not direct_first or proxies_loaded:
             return
@@ -975,6 +1026,8 @@ def search_by_name(name, limit=50, direct_first=False):
             if p and p not in seen:
                 attempts.append(p)
                 seen.add(p)
+        if _safer_relay_url():
+            attempts.append(_RELAY_SENTINEL)
 
     last_err = None
     started = time.time()
@@ -987,10 +1040,16 @@ def search_by_name(name, limit=50, direct_first=False):
         remaining = SAFER_TOTAL_BUDGET - (time.time() - started)
         if remaining <= 0:
             break
-        req_proxies = {"http": proxy, "https": proxy} if proxy else None
+        req_proxies = None
+        url = SAFER_URL
+        if proxy == _RELAY_SENTINEL:
+            # Relay: same path+query, different egress IP, no proxy.
+            url = _safer_relay_url() + "/query.asp"
+        elif proxy:
+            req_proxies = {"http": proxy, "https": proxy}
         resp, err, timed_out = _request_with_deadline(
-            lambda _rp=req_proxies: requests.get(
-                SAFER_URL, params=params, headers=HEADERS,
+            lambda _rp=req_proxies, _u=url: requests.get(
+                _u, params=params, headers=HEADERS,
                 timeout=(SAFER_CONNECT_TIMEOUT, SAFER_READ_TIMEOUT),
                 proxies=_rp),
             deadline=min(SAFER_ATTEMPT_DEADLINE, remaining))
@@ -998,18 +1057,24 @@ def search_by_name(name, limit=50, direct_first=False):
             last_err = "Fetch timed out (connection stalled)"
             if proxy is not None and not direct_first:
                 attempts = attempts[:attempt] + [None]
+                if _safer_relay_url() \
+                        and _RELAY_SENTINEL not in attempts:
+                    attempts.append(_RELAY_SENTINEL)
         elif err is not None:
             last_err = "Fetch error: %s" % err
-        elif resp.status_code in (429, 503) or resp.status_code >= 500:
+        elif resp.status_code in (403, 429, 503) or resp.status_code >= 500:
             last_err = "HTTP %s from SAFER" % resp.status_code
             _maybe_load_proxies()
             if attempt < len(attempts):
-                wait = BACKOFF[min(attempt - 1, len(BACKOFF) - 1)]
+                # 403 = this IP is blocked: rotate at once, no backoff.
+                wait = 0 if resp.status_code == 403 else \
+                    BACKOFF[min(attempt - 1, len(BACKOFF) - 1)]
                 remaining = SAFER_TOTAL_BUDGET - (time.time() - started)
                 if remaining <= 0:
                     break
                 time.sleep(min(wait, remaining))
                 continue
+            _log.warning("SAFER name search failed for %r: %s", name, last_err)
             return [], last_err
         else:
             try:
@@ -1019,4 +1084,6 @@ def search_by_name(name, limit=50, direct_first=False):
             else:
                 return parse_name_matches(resp.text, limit), None
         _maybe_load_proxies()
+    _log.warning("SAFER name search failed for %r: %s",
+                 name, last_err or "Fetch error")
     return [], last_err or "Fetch error"
